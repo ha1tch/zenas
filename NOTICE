@@ -1,0 +1,8 @@
+zenas - a Z80 macro assembler in Go
+
+Copyright (c) 2026 haitch
+
+Licensed under the Apache License, Version 2.0.
+You may obtain a copy of the License at:
+
+    https://www.apache.org/licenses/LICENSE-2.0
