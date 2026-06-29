@@ -15,7 +15,7 @@ import (
 	"strings"
 
 	"github.com/ha1tch/zenas/assembler"
-	"github.com/ha1tch/zenas/pkg/build"
+	"github.com/ha1tch/zentools/pkg/build"
 )
 
 func handleBuild() {
