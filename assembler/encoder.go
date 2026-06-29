@@ -697,7 +697,7 @@ func encodeADDHLrp(template *InstructionTemplate, operands []*ResolvedOperand) (
 	if dst == "IX" || dst == "IY" {
 		// ADD IX,rp: DD/FD prefix + 0x09|(p<<4). The source pair uses HL's code
 		// (2) when it is the index register itself (ADD IX,IX), otherwise its
-		// normal code. ZX Opal uses ADD IX,BC/DE/SP.
+		// normal code. Real-world source uses ADD IX,BC/DE/SP.
 		var rp uint8
 		if src == dst {
 			rp = 2

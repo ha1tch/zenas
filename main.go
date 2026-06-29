@@ -903,7 +903,7 @@ func outputJSON(data interface{}) error {
 //
 // one line per symbol, sorted by name. Values are 16-bit, rendered as
 // zero-padded uppercase hex with a leading 0 and trailing H (pasmo's
-// convention, e.g. 08000H). This is the format the ZX Opal tooling
+// convention, e.g. 08000H). This is the format the downstream tooling
 // (gen_memmap.py, release.sh) parses.
 func writeSymFile(path string, symbols map[string]uint16) error {
 	names := make([]string, 0, len(symbols))

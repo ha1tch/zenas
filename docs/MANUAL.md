@@ -23,17 +23,28 @@ the Z80N opcode details see [Z80N_REFERENCE.md](Z80N_REFERENCE.md).
 - [Output and reports](#output-and-reports)
 - [Running and testing assembled code](#running-and-testing-assembled-code)
 
+For an orientation aimed at users coming from another assembler — what is
+familiar, what differs, and what zenas uniquely enables — see the
+[Zenas programming guide](ZENAS_PROGRAMMING.md).
+
 ## Running zenas
 
 ```
-zenas assemble <input.asm> [output.bin] [options]
-zenas version
-zenas help [--all]
+zenas assemble <input.asm> [output.bin] [options]   assemble to a raw binary
+zenas build    <input.asm> [options]                assemble and package to tape/snapshot
+zenas run      <input.asm> [options]                assemble and execute in the emulator
+zenas assert   <input.asm> --expect ... [options]   execute and check final state
+zenas test                                          run zenas's built-in self-tests
+zenas version                                        print the version
+zenas help [--all]                                   show help; --all for the full reference
 ```
 
 If no output file is given, the input name is used with a `.bin` extension.
 `zenas help` shows the common options; `zenas help --all` shows the full
-reference.
+reference. The `build` command is covered under
+[Output and reports](#output-and-reports) (for the artifact formats) and the
+`run`/`assert` execution layer under
+[Running and testing assembled code](#running-and-testing-assembled-code).
 
 Options:
 

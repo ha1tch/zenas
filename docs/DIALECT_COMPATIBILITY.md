@@ -18,8 +18,9 @@ used only as a diagnostic oracle. This document is the durable artefact.
 | pasmo own sample suite | `.pasmo` | 7 | 27 | 34 |
 | sjasmplus / SpecNext | plain + `--next` | 7 | 63 | 70 |
 
-The low pasmo number is the important correction. ZX Opal (real pasmo source
-that assembles byte-identical) passes because it uses only the common core. The
+The low pasmo number is the important correction. The reference kernel (real
+pasmo source that assembles byte-identical) passes because it uses only the
+common core. The
 pasmo sample suite deliberately exercises every pasmo feature, so it exposes the
 true gap. The 7 passing sjasmplus files are the trivial tutorial files with no
 SpecNext-specific constructs; every realistic SpecNext program fails immediately
@@ -91,8 +92,8 @@ These form one feature (scoped labels) and appear in 11 of the 34 files. They ar
 the single largest pasmo blocker. Implementing them is a real scoping subsystem
 (a symbol-table scope stack), not a syntactic alias - the expensive, deliberate
 piece of pasmo compatibility. Note: this corrects an earlier impression (based on
-ZX Opal alone, which uses one bare `LOCAL`) that `PROC`/`LOCAL` were rare; pasmo's
-own suite uses them heavily.
+the reference kernel alone, which uses one bare `LOCAL`) that `PROC`/`LOCAL` were
+rare; pasmo's own suite uses them heavily.
 
 ### Out of scope by nature
 

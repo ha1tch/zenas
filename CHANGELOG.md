@@ -4,6 +4,39 @@ All notable changes to zenas are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.2] - 2026-06-29
+
+### Added
+
+- **Zenas programming guide** (`docs/ZENAS_PROGRAMMING.md`): an orientation for
+  users coming from another assembler — where zenas is familiar, where it
+  differs, and what it uniquely enables (the in-process execution, assertion, and
+  go-style test layer, C-style typed macros, packages, build-tag bitmasks, and
+  scoped dialect modes).
+
+### Changed
+
+- README now documents the `run`, `assert`, and `test` commands with usage
+  examples; previously only `assemble` and `build` were shown.
+- Manual command synopsis lists all subcommands (`assemble`, `build`, `run`,
+  `assert`, `test`, `version`, `help`); previously it listed only `assemble`.
+
+## [0.7.1] - 2026-06-29
+
+### Changed
+
+- README reworked to lead with the commands and their usage, with the
+  capability summary moved below.
+
+### Removed
+
+- Internal design, status, and roadmap notes that documented work in progress
+  during development and are superseded by the user-facing manual: the macro
+  status assessment, the package and pasmo-dialect design notes, the encoder
+  strategy note, the deferred-work roadmap, and the library-reuse assessment.
+  User-facing reference (the manual, instruction-set and Z80N references, the
+  runtime and dialect-compatibility guides) is unchanged.
+
 ## [0.7.0] - 2026-06-29
 
 ### Added
@@ -167,8 +200,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Notes
 
 - The pasmo dialect currently covers the location counter and DEFM; no-colon
-  labels, pasmo macro syntax, and PROC/LOCAL scoping are planned (see
-  docs/PASMO_DIALECT_DESIGN.md).
+  labels, pasmo macro syntax, and PROC/LOCAL scoping are planned.
 
 ## [0.5.0] - 2026-06-28
 
@@ -251,8 +283,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - C-style macros remain structured-assembly sugar over traditional macros, with
   parameters passed by textual substitution. A real calling convention was
-  assessed and declined (see `docs/MACRO_STATUS.md`); z88dk is the mature option
-  for compiling C to Z80 (see `docs/Z88DK_REUSE.md`).
+  assessed and declined; z88dk is the mature option for compiling C to Z80.
 
 ## [0.3.0] - 2026-06-28
 
@@ -280,7 +311,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - These fixes cover Phase 1 of the macro work (traditional macros). C-style
   function *parameters* remain unimplemented; C-style support is limited to
-  parameterless functions. See `docs/MACRO_STATUS.md`.
+  parameterless functions.
 
 ## [0.2.2] - 2026-06-28
 
@@ -409,8 +440,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Milestone
 
-- zenas assembles the full **ZX Opal** kernel byte-identically to pasmo (6530
-  bytes, all 400 symbols matching). This was the readiness acceptance test.
+- zenas assembles a full real-world operating-system kernel byte-identically
+  to pasmo (6530 bytes, all 400 symbols matching). This was the readiness
+  acceptance test.
 
 ## [0.0.7] - 2026-06-28
 
@@ -476,7 +508,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Symbol-file output: `--sym` writes a pasmo-format `.sym` file (lines of the form
   `NAME EQU 0XXXXH`, sorted by name) alongside the binary; `--sym=path`
   sets an explicit path. Without the flag, no symbol file is written. This is the
-  format the ZX Opal memory-map and release tooling parses.
+  format the downstream memory-map and release tooling parses.
 
 
 ### Changed
@@ -489,7 +521,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Instruction encoder coverage extended to close the gaps the ZX Opal source
+- Instruction encoder coverage extended to close the gaps real-world source
   exercises. New / fixed forms, all verified byte-correct:
   - Block transfer/search: `LDIR`, `LDDR`, `LDI`, `LDD`, `CPIR`, `CPDR`, `CPI`,
     `CPD`.
@@ -527,8 +559,6 @@ fresh at 0.0.1 for the standalone project.
   and reported. Both bare `INCLUDE` and dotted `.INCLUDE` are accepted, with
   optional trailing comments. `AssembleFile` is now implemented and sets the
   include base directory automatically.
-- Documentation: `docs/ZENAS_READINESS.md` (assembler readiness tracking) and
-  `docs/ENCODER_STRATEGY.md` (the zen80 decode-algebra approach to the encoder).
 
 ### Fixed
 
@@ -551,4 +581,4 @@ fresh at 0.0.1 for the standalone project.
   references, a working traditional macro system, multiple number formats
   (`0x`, `%`, decimal), string and multi-value `DB`/`DW`, bare and dotted
   directives, `INCLUDE`, and a symbol table.
-- Known gaps are tracked in `docs/ZENAS_READINESS.md`.
+- Known gaps are tracked in the project issue list.

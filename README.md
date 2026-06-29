@@ -1,134 +1,148 @@
 # zenas
 
-A Z80 macro assembler written in Go.
+A Z80 and Z80N macro assembler written in Go. It assembles Z80 source to raw
+machine code, or directly to runnable ZX Spectrum tapes and snapshots. No
+third-party assembler dependencies.
 
-zenas assembles Z80 source to raw machine code. It has a two-pass design with
-forward-reference resolution, a traditional macro system, and an instruction
-encoder whose patterns derive from the zen80 emulator's decoder.
+- **[Programming guide](docs/ZENAS_PROGRAMMING.md)** — for users coming from
+  another assembler: what's familiar, what differs, what's unique.
+- **[Manual](docs/MANUAL.md)** — the command line, source language, directives,
+  conditionals, build tags, INCLUDE/INCBIN, Z80N, and character sets.
+- **[Instruction set](docs/INSTRUCTION_SET.md)** — coverage by family.
 
-## Status
+## Commands
 
-zenas assembles complete Z80 programs. It builds a real-world Z80 operating
-system kernel (ZX Opal, ~6.5 KB with ten included subsystems at `ORG $5CAD`)
-byte-for-byte identically to pasmo, with every symbol address matching.
+| Command          | Does                                                        |
+| ---------------- | ---------------------------------------------------------- |
+| `zenas assemble` | assemble source to a raw binary (or a JSON report)          |
+| `zenas build`    | assemble and package into a tape or snapshot               |
+| `zenas run`      | assemble and execute in the built-in Z80 emulator          |
+| `zenas assert`   | execute and check the final machine state (CI-friendly)    |
+| `zenas version`  | print the version                                           |
+| `zenas help`     | list options; `help --all` for the full reference          |
 
-The instruction set covers three classes, verified against established reference
-assemblers (see [`docs/INSTRUCTION_SET.md`](docs/INSTRUCTION_SET.md)):
-
-- the **468** documented Z80 instructions;
-- the **48** undocumented IX/IY half-register forms (IXH/IXL/IYH/IYL), with the
-  illegal combinations rejected;
-- the **29** Z80N (ZX Spectrum Next) extensions, off by default and enabled with
-  `--next` (alias `--cpu=Z80N`).
-
-The documented and half-register forms match both pasmo and sjasmplus; the Z80N
-forms match sjasmplus, the de facto ZX Spectrum Next assembler.
-
-Working today: two-pass assembly with forward references; `INCLUDE` with
-cross-boundary forward references; conditional assembly (`IF`/`IFDEF`/`IFNDEF`/
-`ELSE`/`ENDIF`) with `--define` build flags; operand and displacement expressions
-with symbol arithmetic; case-sensitive symbols; a pasmo-compatible symbol file
-(`--sym`); the traditional macro system; number formats `0x`/`$`/`%`/decimal and
-character literals; string and multi-value `DB`/`DW`; `DS`/`DEFS`; and `INCBIN` (with optional
-skip and length).
-
-## Build
-
-Requires Go 1.25 or later.
+### Usage: assemble
 
 ```
+zenas assemble <input.asm> [output.bin] [--hex] [--json=LEVEL] [--charset=NAME]
+              [--sym[=path]] [--define=NAME[=VAL]] [--tag NAME]
+              [--next | --cpu=Z80|Z80N]
+```
+
+```
+# assemble to a raw binary
+zenas assemble game.asm game.bin
+
+# enable the ZX Spectrum Next instruction set
+zenas assemble game.asm --next
+
+# conditional build with a defined symbol and two build tags
+zenas assemble game.asm out.bin --define DEBUG --tag debug --tag plus3
+
+# write a pasmo-format symbol file alongside the output
+zenas assemble game.asm game.bin --sym
+
+# emit a JSON report instead of a binary
+zenas assemble game.asm --json=detailed
+```
+
+`--next` (or `--cpu=Z80N`) turns on the Z80N extensions; the default is `Z80`.
+`--define` pre-sets a symbol for `IF`/`IFDEF`. `--tag` selects a build tag, the
+way Go build tags select variants: each tag defines `ZENAS_TAG_NAME`,
+`ZENAS_TAGBIT_NAME`, and contributes to the composite `ZENAS_TAGS` bitmask, so
+tags compose in `IF` conditions with `AND`/`OR`/`NOT`. `--charset` picks the
+string encoding (Spectrum, MSX, CPC and regional variants; see `help --all`).
+
+### Usage: build
+
+```
+zenas build <input.asm> [--tap] [--tzx] [--sna] [--z80] [--loader]
+            [--start <addr|symbol>] [--sp <addr>]
+            [--model 48k|128k|plus2|plus2a|plus3] [-o <basename>]
+```
+
+```
+# snapshot for development testing — loads and runs in one step
+zenas build game.asm --z80 --start main --model 128k
+
+# tapes for distribution, with a BASIC auto-run loader
+zenas build game.asm --tap --tzx --loader --start main
+```
+
+`build` assembles the source and packages it into loadable artifacts. Snapshots
+(`--sna`, `--z80`) carry a full machine state, so the code runs immediately at
+`--start`; tapes (`--tap`, `--tzx`) encode the code as a CODE block, and
+`--loader` prepends a BASIC loader so `LOAD ""` runs it. `--start` (an address
+or a source label) is required for snapshots and for `--loader`; `--sp` overrides
+the stack pointer; `--model` picks the machine a snapshot is overlaid on; `-o`
+sets the output basename. Recommended workflow: snapshots while iterating, tapes
+to ship. Examples are in [`examples/`](examples/).
+
+### Usage: run and test
+
+zenas can execute the code it assembles, in a built-in Z80 emulator, and assert
+on the result — no separate emulator, no file round-trip.
+
+```
+# run a routine and watch it execute
+zenas run game.asm --call=main --trace
+
+# assert a routine's contract (exits non-zero on failure, so it fits CI)
+zenas assert math.asm --call=multiply --expect="A=0x0C,CF=0"
+
+# run a whole test suite: a *_test.asm file with test_* routines and .EXPECT
+zenas assert math_test.asm
+```
+
+`run` executes the assembled code and reports the final CPU and memory state;
+`--trace` shows each instruction, `--dump=START:LEN` dumps memory, and
+`--preload=ADDR,FILE` loads input data first. `assert` adds `--expect` checks
+over registers, flags, and memory bytes. A `*_test.asm` file with `test_*`
+routines each followed by an `.EXPECT` directive runs go-test style. See the
+[Zenas programming guide](docs/ZENAS_PROGRAMMING.md) for the full testing story.
+
+## Install
+
+```sh
+go install github.com/ha1tch/zenas@latest
+```
+
+Or build from a checkout (requires Go 1.25 or later):
+
+```sh
 make build         # -> build/zenas
 make test          # run the test suite
 make smoke         # assemble the bundled examples as a sanity check
 ```
 
-Or directly:
+## What it assembles
 
-```
-go build -o build/zenas .
-```
+zenas assembles complete Z80 programs and matches pasmo byte-for-byte on real
+operating-system source — a multi-kilobyte kernel with many included subsystems
+assembles to an identical binary, with every symbol address matching. The
+instruction set covers three classes, each cross-checked against an established
+reference assembler:
 
-## Usage
+- the **468** documented Z80 instructions (match pasmo and sjasmplus);
+- the **48** undocumented IX/IY half-register forms (match pasmo and sjasmplus),
+  with the illegal combinations rejected;
+- the **29** Z80N (ZX Spectrum Next) extensions (match sjasmplus), off by
+  default, enabled with `--next`.
 
-```
-zenas assemble <input.asm> [output.bin] [--hex] [--json=level] [--charset=name]
-                [--sym[=path]] [--define=NAME[=VAL]] [--tag NAME]
-                [--next | --cpu=Z80|Z80N]
-zenas build <input.asm> [--tap] [--tzx] [--sna] [--z80] [--loader]
-                [--start <addr|symbol>] [--sp <addr>]
-                [--model 48k|128k|plus2|plus2a|plus3] [-o <basename>]
-zenas version
-zenas help
-```
-
-`--next` (or `--cpu=Z80N`) enables the ZX Spectrum Next Z80N instruction set; the
-default is `--cpu=Z80`. `--tag NAME` selects a build tag, the way Go build tags
-select variants. Each tag defines `ZENAS_TAG_NAME` (a presence flag),
-`ZENAS_TAGBIT_NAME` (its bit, assigned in command-line order), and contributes to
-the composite bitmask `ZENAS_TAGS` (always defined; 0 when no tags are set). Tags
-compose in `IF` conditions with `AND`, `OR`, `NOT` and parentheses - e.g.
-`IF ZENAS_TAG_debug AND ZENAS_TAG_plus3`. Examples are in [`examples/`](examples/).
-
-### build
-
-`zenas build` assembles the source and packages the result into loadable
-artifacts. Where `assemble` produces a raw binary, `build` emits one or more of:
-
-- `--sna`, `--z80` - snapshots. These carry a full machine state, so the code
-  loads and runs immediately at the entry point given by `--start`.
-- `--tap`, `--tzx` - tape images. The code is encoded as a CODE block; add
-  `--loader` to prepend a BASIC auto-run loader so `LOAD ""` runs it.
-
-**Recommended workflow: use `.z80` (v3) or `.sna` snapshots for development
-testing, and tapes (`.tap`/`.tzx`) as the primary format for wider
-distribution.** Snapshots get a build running in one step during iteration;
-tapes are what you ship.
-
-`--start` sets the entry point (an address such as `0x8000`, `$8000`, `32768`,
-or a label from the source) and is required for snapshot output and for
-`--loader`. `--sp` overrides the stack pointer (default `0xFF00`). `--model`
-selects the target machine for snapshot output (the snapshot is overlaid on that
-model's booted state). `-o` sets the output basename; each format appends its own
-extension.
-
-```
-zenas build game.asm --z80 --start main --model 128k     # snapshot for testing
-zenas build game.asm --tap --tzx --loader --start main   # tapes for release
-```
-
-## Testing
-
-```
-make test           # Go test suite
-make smoke          # assemble the bundled examples
-make test-sjasmplus # optional: cross-check encodings against sjasmplus
-```
-
-`make test-sjasmplus` builds sjasmplus from source and verifies that every
-documented, half-register, and Z80N form assembles byte-for-byte identically to
-it. It needs git, make and a C++17 compiler, and is not part of `make test`. Set
-`SJASMPLUS=/path/to/sjasmplus` to use an existing binary instead of building one.
-The base Z80 set is also checked against pasmo via
-`tools/check_instr_coverage.sh`.
-
-## Versioning
-
-The project version lives in `VERSION` and is mirrored into
-`pkg/version/version.go`. Keep them in sync with:
-
-```
-./syncver.sh set 0.2.0
-./syncver.sh check
-```
+See [`docs/INSTRUCTION_SET.md`](docs/INSTRUCTION_SET.md) for the coverage detail.
 
 ## Documentation
 
-- [`docs/MANUAL.md`](docs/MANUAL.md) - the command line, source language, directives, conditionals, build tags, INCLUDE/INCBIN, Z80N, and character sets.
-- [`docs/INSTRUCTION_SET.md`](docs/INSTRUCTION_SET.md) - instruction coverage by family.
-- [`docs/Z80N_REFERENCE.md`](docs/Z80N_REFERENCE.md) - Z80N opcode encodings.
+- **[Zenas programming guide](docs/ZENAS_PROGRAMMING.md)** — coming from another
+  assembler: what's familiar, what differs, and what zenas uniquely enables.
+- **[Manual](docs/MANUAL.md)** — full command line, language, and directives.
+- **[Instruction set](docs/INSTRUCTION_SET.md)** — coverage by family.
+- **[Z80N reference](docs/Z80N_REFERENCE.md)** — Z80N opcode encodings.
 
 `zenas help` lists the common options; `zenas help --all` is the full reference.
 
 ## Licence
 
 Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+
+Copyright (c) 2026 haitch <h@ual.li>
