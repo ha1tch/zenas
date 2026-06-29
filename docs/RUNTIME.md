@@ -169,10 +169,13 @@ be decimal or hexadecimal.
 --expect="ZF=1,CF=0"
 ```
 
-**Memory.** `(ADDR)=VALUE` checks a single byte at an address.
+**Memory.** `(ADDR)=VALUE` checks a single byte at an address. `ADDR` may be a
+numeric address or a symbol name (a label or variable), resolved against the
+assembled program:
 
 ```
 --expect="(0xC000)=0xAB"
+--expect="(total)=42"
 ```
 
 A note on `AF`: the low byte of `AF` is the flags register, which includes the

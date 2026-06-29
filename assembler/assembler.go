@@ -118,6 +118,7 @@ type Assembler struct {
 
 	// Macro settings (ADDED)
 	macroStyle        MacroStyle
+	macroMode         MacroMode // INLINE (default) or SINGLETON; set by .MACRO_MODE
 	callingConvention CallingConvention
 	currentPackage    string // affiliation set by .PACKAGE for subsequent macro defs
 	inPasmo           bool   // active pasmo dialect, tracked across the parse loop
@@ -130,6 +131,16 @@ type Assembler struct {
 	// Expansion tracking (ADDED)
 	expansionLevel    int
 	maxExpansionLevel int
+
+	// Singleton-mode tracking (reset each pass). In SINGLETON macro mode the
+	// body of a macro is emitted once as a callable routine; every instantiation
+	// emits argument writes to fixed memory slots followed by a CALL.
+	// singletonLabel maps a macro key to its routine label; singletonSlots maps a
+	// macro key to its ordered parameter-slot labels; singletonRoutines collects
+	// the routine bodies and slot storage to append after the program.
+	singletonLabel    map[string]string
+	singletonSlots    map[string][]string
+	singletonRoutines []ParsedLine
 
 	// Conditional assembly (IF/ELSE/ENDIF). condStack holds one frame per open
 	// IF block; a line is emitted only when every frame is active. Reset at the
@@ -234,6 +245,14 @@ func New() *Assembler {
 
 	// Initialize macro expander (NEW)
 	assembler.macroExpander = NewMacroExpander(macroTable, symbols)
+
+	// Give the macro table the instruction mnemonic set so it can reject a
+	// macro whose bare name would collide with an instruction.
+	mnemonics := make(map[string]bool)
+	for _, m := range encoder.GetAllInstructions() {
+		mnemonics[strings.ToUpper(m)] = true
+	}
+	macroTable.SetMnemonics(mnemonics)
 
 	return assembler
 }
@@ -360,6 +379,9 @@ func (a *Assembler) assemble(source io.Reader) (*AssemblyResult, error) {
 		// names than pass 1 (e.g. LP_1_3 vs LP_1_1) and references would resolve
 		// against symbols that only pass 1 defined.
 		a.macroExpander.Reset()
+		a.singletonLabel = nil
+		a.singletonSlots = nil
+		a.singletonRoutines = nil
 		if pass == 2 {
 			a.output = []uint8{}
 			a.warnings = []AssemblyWarning{}
@@ -463,6 +485,7 @@ func (a *Assembler) preprocessMacroDirectives(tokens []Token) error {
 // hasMacroDirectives checks if source contains macro-related directives (NEW)
 func (a *Assembler) hasMacroDirectives(source string) bool {
 	return strings.Contains(source, ".MACRO_STYLE") ||
+		strings.Contains(source, ".MACRO_MODE") ||
 		strings.Contains(source, "MACRO ") ||
 		strings.Contains(source, "ENDMACRO") ||
 		strings.Contains(source, "uint8_t") ||
@@ -545,6 +568,160 @@ func (a *Assembler) processPassWithMacros(source string, result *AssemblyResult)
 }
 
 // parseWithMacroSupport parses tokens with macro definition and call recognition (FIXED)
+// emitMacroInstantiation appends the code for one macro call to program, honoring
+// the current macro mode. In INLINE mode it appends the fully expanded body. In
+// SINGLETON mode it emits argument setup followed by a CALL to a routine whose
+// body is emitted once (collected in singletonRoutines and appended after the
+// program). The routine label is stable across passes so addresses resolve.
+func (a *Assembler) emitMacroInstantiation(call *MacroCall, program *ParsedProgram, line int) error {
+	if a.macroMode != MacroModeSingleton {
+		expandedLines, err := a.macroExpander.ExpandMacro(call)
+		if err != nil {
+			return fmt.Errorf("error expanding macro '%s' at line %d: %v", call.Name, line, err)
+		}
+		program.Lines = append(program.Lines, expandedLines...)
+		return nil
+	}
+
+	// SINGLETON mode.
+	macro, err := a.macroTable.ValidateCall(call)
+	if err != nil {
+		return fmt.Errorf("error in macro call '%s' at line %d: %v", call.Name, line, err)
+	}
+	key := macroKey(macro.Package, macro.Name)
+
+	if a.singletonLabel == nil {
+		a.singletonLabel = make(map[string]string)
+		a.singletonSlots = make(map[string][]string)
+	}
+	routineLabel, built := a.singletonLabel[key]
+	if !built {
+		// A recursive macro cannot use SINGLETON: arguments live in fixed memory
+		// slots, so a nested call would overwrite the outer call's arguments
+		// before it had finished. INLINE (or an explicit subroutine where the
+		// programmer manages the stack) is the correct choice.
+		if a.macroTable.IsRecursive(macro) {
+			return fmt.Errorf("macro '%s' is recursive and cannot use .MACRO_MODE SINGLETON "+
+				"(its fixed argument slots are not re-entrant); use INLINE, or write an explicit "+
+				"subroutine that saves its context on the stack", call.Name)
+		}
+
+		// Stable label, independent of call site, so both passes agree.
+		base := macro.Name
+		if macro.Package != "" {
+			base = macro.Package + "_" + macro.Name
+		}
+		routineLabel = "__macro_" + base
+		a.singletonLabel[key] = routineLabel
+
+		// Build the routine body with each parameter mapped to a fixed memory
+		// slot, plus the slot storage. The body reads its arguments from the
+		// slots; callers write them before the CALL.
+		body, slots, err := a.macroExpander.ExpandMacroSingleton(macro)
+		if err != nil {
+			return fmt.Errorf("error expanding macro '%s' at line %d: %v", call.Name, line, err)
+		}
+		a.singletonSlots[key] = slots
+
+		// routineLabel: <body> ; RET
+		routine := []ParsedLine{{LineNumber: line, Label: routineLabel}}
+		routine = append(routine, body...)
+		routine = append(routine, ParsedLine{
+			LineNumber:  line,
+			Instruction: &Instruction{Mnemonic: "RET"},
+		})
+		// One byte (or two) of storage per parameter slot, after the routine.
+		for i, slot := range slots {
+			size := 1
+			if i < len(macro.Parameters) {
+				if bits, ok := macro.Parameters[i].Type.DeclaredWidthBits(); ok && bits == 16 {
+					size = 2
+				}
+			}
+			routine = append(routine, ParsedLine{
+				LineNumber: line,
+				Label:      slot,
+				Directive: &Directive{
+					Name:      ".DS",
+					Arguments: []*Expression{{Type: ExpressionNumber, Value: size}},
+				},
+			})
+		}
+		a.singletonRoutines = append(a.singletonRoutines, routine...)
+	}
+
+	// At the call site: write each argument into its slot, then CALL.
+	slots := a.singletonSlots[key]
+	for i, arg := range call.Arguments {
+		if i >= len(slots) {
+			break
+		}
+		// Width of this parameter's slot: 16-bit params use HL, others A.
+		wide := false
+		if i < len(macro.Parameters) {
+			if bits, ok := macro.Parameters[i].Type.DeclaredWidthBits(); ok && bits == 16 {
+				wide = true
+			}
+		}
+		if wide {
+			// LD HL, <arg> ; LD (slot), HL
+			program.Lines = append(program.Lines, ParsedLine{
+				LineNumber: line,
+				Instruction: &Instruction{
+					Mnemonic: "LD",
+					Operands: []*Operand{
+						{Type: OperandRegister16, Register: "HL"},
+						{Type: OperandImmediate16, Expression: arg},
+					},
+				},
+			})
+			program.Lines = append(program.Lines, ParsedLine{
+				LineNumber: line,
+				Instruction: &Instruction{
+					Mnemonic: "LD",
+					Operands: []*Operand{
+						{Type: OperandIndirect, Expression: &Expression{Type: ExpressionSymbol, Symbol: slots[i]}},
+						{Type: OperandRegister16, Register: "HL"},
+					},
+				},
+			})
+			continue
+		}
+		// LD A, <arg> ; LD (slot), A
+		program.Lines = append(program.Lines, ParsedLine{
+			LineNumber: line,
+			Instruction: &Instruction{
+				Mnemonic: "LD",
+				Operands: []*Operand{
+					{Type: OperandRegister8, Register: "A"},
+					{Type: OperandImmediate8, Expression: arg},
+				},
+			},
+		})
+		program.Lines = append(program.Lines, ParsedLine{
+			LineNumber: line,
+			Instruction: &Instruction{
+				Mnemonic: "LD",
+				Operands: []*Operand{
+					{Type: OperandIndirect, Expression: &Expression{Type: ExpressionSymbol, Symbol: slots[i]}},
+					{Type: OperandRegister8, Register: "A"},
+				},
+			},
+		})
+	}
+	program.Lines = append(program.Lines, ParsedLine{
+		LineNumber: line,
+		Instruction: &Instruction{
+			Mnemonic: "CALL",
+			Operands: []*Operand{{
+				Type:       OperandImmediate16,
+				Expression: &Expression{Type: ExpressionSymbol, Symbol: routineLabel},
+			}},
+		},
+	})
+	return nil
+}
+
 func (a *Assembler) parseWithMacroSupport(tokens []Token) (*ParsedProgram, error) {
 	program := &ParsedProgram{Lines: []ParsedLine{}}
 	pos := 0
@@ -569,6 +746,16 @@ func (a *Assembler) parseWithMacroSupport(tokens []Token) (*ParsedProgram, error
 		// Check for calling convention directive
 		if a.isDirective(tokens, pos, ".CALLING_CONVENTION") {
 			newPos, err := a.processCallingConventionDirective(tokens, pos)
+			if err != nil {
+				return nil, err
+			}
+			pos = newPos
+			continue
+		}
+
+		// Check for macro mode directive: .MACRO_MODE INLINE|SINGLETON
+		if a.isDirective(tokens, pos, ".MACRO_MODE") {
+			newPos, err := a.processMacroModeDirective(tokens, pos)
 			if err != nil {
 				return nil, err
 			}
@@ -650,14 +837,9 @@ func (a *Assembler) parseWithMacroSupport(tokens []Token) (*ParsedProgram, error
 					}
 					
 					// Expand the macro call immediately
-					expandedLines, err := a.macroExpander.ExpandMacro(call)
-					if err != nil {
-						return nil, fmt.Errorf("error expanding macro '%s' at line %d: %v", 
-							call.Name, tokens[pos].Line, err)
+					if err := a.emitMacroInstantiation(call, program, tokens[pos].Line); err != nil {
+						return nil, err
 					}
-					
-					// Add expanded lines to program
-					program.Lines = append(program.Lines, expandedLines...)
 					pos = newPos
 					continue
 				}
@@ -677,12 +859,9 @@ func (a *Assembler) parseWithMacroSupport(tokens []Token) (*ParsedProgram, error
 				return nil, fmt.Errorf("error parsing macro call '%s' at line %d: %v",
 					tokens[pos].Value, tokens[pos].Line, err)
 			}
-			expandedLines, err := a.macroExpander.ExpandMacro(call)
-			if err != nil {
-				return nil, fmt.Errorf("error expanding macro '%s' at line %d: %v",
-					call.Name, tokens[pos].Line, err)
+			if err := a.emitMacroInstantiation(call, program, tokens[pos].Line); err != nil {
+				return nil, err
 			}
-			program.Lines = append(program.Lines, expandedLines...)
 			pos = newPos
 			continue
 		}
@@ -698,6 +877,13 @@ func (a *Assembler) parseWithMacroSupport(tokens []Token) (*ParsedProgram, error
 		}
 
 		pos = newPos
+	}
+
+	// In SINGLETON mode, append the collected routine bodies after the program
+	// code. The main code ends with its own HALT/RET, so execution never falls
+	// into them; each routine is reached only by the CALLs emitted at call sites.
+	if len(a.singletonRoutines) > 0 {
+		program.Lines = append(program.Lines, a.singletonRoutines...)
 	}
 
 	return program, nil
@@ -1118,6 +1304,37 @@ func (a *Assembler) isDirective(tokens []Token, pos int, directiveName string) b
 }
 
 // processMacroStyleDirective handles .MACRO_STYLE directive (FIXED)
+// processMacroModeDirective handles `.MACRO_MODE INLINE|SINGLETON`, which selects
+// how repeated macro instantiations are emitted (see MacroMode).
+func (a *Assembler) processMacroModeDirective(tokens []Token, pos int) (int, error) {
+	if !TokenValueMatches(tokens, pos, TokenDirective, ".MACRO_MODE") {
+		return pos, fmt.Errorf("expected .MACRO_MODE directive")
+	}
+	pos++
+
+	if pos >= len(tokens) || tokens[pos].Type != TokenIdentifier {
+		return pos, fmt.Errorf("expected macro mode after .MACRO_MODE (INLINE or SINGLETON)")
+	}
+
+	modeStr := strings.ToUpper(tokens[pos].Value)
+	pos++
+
+	switch modeStr {
+	case "INLINE":
+		a.macroMode = MacroModeInline
+	case "SINGLETON":
+		a.macroMode = MacroModeSingleton
+	default:
+		return pos, fmt.Errorf("unknown macro mode: %s (use INLINE or SINGLETON)", modeStr)
+	}
+
+	pos = FindEndOfStatement(tokens, pos)
+	if pos < len(tokens) && tokens[pos].Type == TokenNewline {
+		pos++
+	}
+	return pos, nil
+}
+
 func (a *Assembler) processMacroStyleDirective(tokens []Token, pos int) (int, error) {
 	if !TokenValueMatches(tokens, pos, TokenDirective, ".MACRO_STYLE") {
 		return pos, fmt.Errorf("expected .MACRO_STYLE directive")

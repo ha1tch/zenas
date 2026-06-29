@@ -36,11 +36,12 @@ type runOptions struct {
 
 // expectation is a single assertion over post-run state.
 type expectation struct {
-	raw    string // original text, for reporting
-	kind   string // "reg", "flag", "mem"
-	target string // register name, flag letter, or address (as text)
-	addr   uint16 // for kind=="mem"
-	want   int    // expected value
+	raw     string // original text, for reporting
+	kind    string // "reg", "flag", "mem"
+	target  string // register name, flag letter, or address (as text)
+	addr    uint16 // for kind=="mem"
+	addrSym string // for kind=="mem": symbol name to resolve, if addr came from one
+	want    int    // expected value
 }
 
 // preload is a binary file to load into memory before execution.
@@ -149,7 +150,7 @@ func runDiscoveredTests(result *assembler.AssemblyResult, opts runOptions) {
 		var firstFail string
 		for _, spec := range specs {
 			if spec.Expect != "" {
-				exps, err := parseExpects(spec.Expect)
+				exps, err := parseExpects(spec.Expect, result.Symbols)
 				if err != nil {
 					testPass = false
 					if firstFail == "" {
@@ -301,6 +302,13 @@ func handleAssert() {
 		return
 	}
 
+	// Now that the program is assembled, resolve any symbol-named memory
+	// addresses given in --expect (they could not be resolved at parse time).
+	if err := resolveExpectSymbols(opts.expects, result.Symbols); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		os.Exit(1)
+	}
+
 	callAddr := -1
 	if opts.callLabel != "" {
 		addr, ok := result.Symbols[opts.callLabel]
@@ -432,7 +440,7 @@ var registerNames = map[string]bool{
 	"AF_": true, "BC_": true, "DE_": true, "HL_": true,
 }
 
-func parseExpects(s string) ([]expectation, error) {
+func parseExpects(s string, symbols map[string]uint16) ([]expectation, error) {
 	var out []expectation
 	for _, part := range strings.Split(s, ",") {
 		part = strings.TrimSpace(part)
@@ -446,17 +454,29 @@ func parseExpects(s string) ([]expectation, error) {
 		lhs := strings.TrimSpace(part[:eq])
 		rhs := strings.TrimSpace(part[eq+1:])
 
-		// Memory: (ADDR)=VALUE
+		// Memory: (ADDR)=VALUE, where ADDR is a numeric address or a symbol.
 		if strings.HasPrefix(lhs, "(") && strings.HasSuffix(lhs, ")") {
-			addr, err := parseAddress(lhs[1 : len(lhs)-1])
-			if err != nil {
-				return nil, fmt.Errorf("--expect memory address: %s", err)
-			}
+			locText := strings.TrimSpace(lhs[1 : len(lhs)-1])
 			val, err := parseAddress(rhs)
 			if err != nil {
 				return nil, fmt.Errorf("--expect memory value: %s", err)
 			}
-			out = append(out, expectation{raw: part, kind: "mem", addr: addr, want: int(val)})
+			exp := expectation{raw: part, kind: "mem", want: int(val)}
+			if addr, err := parseAddress(locText); err == nil {
+				exp.addr = addr
+			} else if symbols != nil {
+				// Resolve the symbol now if the table is available.
+				if a, ok := symbols[locText]; ok {
+					exp.addr = a
+				} else {
+					return nil, fmt.Errorf("--expect memory address: %q is not a symbol or address", locText)
+				}
+			} else {
+				// No symbol table yet (CLI --expect parsed before assembly);
+				// defer resolution to resolveExpectSymbols.
+				exp.addrSym = locText
+			}
+			out = append(out, exp)
 			continue
 		}
 
@@ -486,6 +506,23 @@ func parseExpects(s string) ([]expectation, error) {
 		return nil, fmt.Errorf("--expect: unknown target %q (use a register, (addr), or a flag like CF)", lhs)
 	}
 	return out, nil
+}
+
+// resolveExpectSymbols fills in deferred symbol addresses for memory
+// expectations parsed before the symbol table was available (CLI --expect).
+// Returns an error naming the first unresolved symbol.
+func resolveExpectSymbols(exps []expectation, symbols map[string]uint16) error {
+	for i := range exps {
+		if exps[i].kind == "mem" && exps[i].addrSym != "" {
+			a, ok := symbols[exps[i].addrSym]
+			if !ok {
+				return fmt.Errorf("--expect memory address: %q is not a symbol or address", exps[i].addrSym)
+			}
+			exps[i].addr = a
+			exps[i].addrSym = ""
+		}
+	}
+	return nil
 }
 
 func handleRun() {
@@ -543,6 +580,16 @@ func handleRun() {
 // sets PC to the origin (or to callAddr in subroutine mode), and steps the CPU
 // until HALT, the sentinel return, or the instruction cap. It returns the result
 // and the RAM, so callers can read memory for assertions.
+// nullIO is a do-nothing I/O device for the run harness. The harness assembles
+// and runs code that may use IN/OUT, but there is no attached hardware; without a
+// device the CPU would dereference a nil interface and crash. Reads return 0xFF
+// (the value a Z80 sees on an unconnected, floating port that idles high) and
+// writes are discarded.
+type nullIO struct{}
+
+func (nullIO) In(port uint16) uint8     { return 0xFF }
+func (nullIO) Out(port uint16, v uint8) {}
+
 func execute(result *assembler.AssemblyResult, opts runOptions, callAddr int) (runResult, *memory.RAM) {
 	ram := memory.NewRAM()
 
@@ -559,7 +606,7 @@ func execute(result *assembler.AssemblyResult, opts runOptions, callAddr int) (r
 
 	ram.Load(result.Origin, result.MachineCode)
 
-	cpu := z80.New(ram, nil)
+	cpu := z80.New(ram, nullIO{})
 	cpu.Reset()
 	// Start from a known, zeroed register state so runs are deterministic and
 	// assertions are reproducible. Reset() only clears control state, not the
@@ -778,7 +825,7 @@ func parseRunArgs(args []string) (runOptions, error) {
 				return opts, fmt.Errorf("--call requires a label name")
 			}
 		case strings.HasPrefix(arg, "--expect="):
-			exps, err := parseExpects(strings.TrimPrefix(arg, "--expect="))
+			exps, err := parseExpects(strings.TrimPrefix(arg, "--expect="), nil)
 			if err != nil {
 				return opts, err
 			}

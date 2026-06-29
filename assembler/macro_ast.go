@@ -24,6 +24,29 @@ func (ms MacroStyle) String() string {
 	}
 }
 
+// MacroMode controls how repeated instantiations of a macro are emitted.
+//
+//	INLINE    - every instantiation emits the full body (the default).
+//	SINGLETON - the body is emitted once as a callable routine; every
+//	            instantiation emits argument setup followed by a CALL to it.
+type MacroMode int
+
+const (
+	MacroModeInline MacroMode = iota
+	MacroModeSingleton
+)
+
+func (mm MacroMode) String() string {
+	switch mm {
+	case MacroModeInline:
+		return "INLINE"
+	case MacroModeSingleton:
+		return "SINGLETON"
+	default:
+		return "UNKNOWN"
+	}
+}
+
 // CallingConvention defines how parameters are passed between macros
 type CallingConvention struct {
 	Name         string

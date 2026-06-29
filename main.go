@@ -359,9 +359,9 @@ func handleTest() {
 			expect: []uint8{0x3E, 0x01}, // LD A,1 - semicolon is a terminator inside braces
 		},
 		{
-			name:   "C-style: typed return emits RET and checks width",
+			name:   "C-style: typed return places value in A, no RET when inlined",
 			source: ".MACRO_STYLE C\nuint8_t g() { asm { LD A,5; } return 42; }\nvoid main() { g(); }\n.END\n",
-			expect: []uint8{0x3E, 0x05, 0xC9}, // LD A,5 / RET
+			expect: []uint8{0x3E, 0x05, 0x3E, 0x2A}, // LD A,5 / LD A,42 (return literal); no RET
 		},
 		{
 			name:    "C-style: return width mismatch is an error",
@@ -379,9 +379,9 @@ func handleTest() {
 			wantErr: true,
 		},
 		{
-			name:   "C-style: void bare return emits RET",
+			name:   "C-style: void bare return emits no RET when inlined",
 			source: ".MACRO_STYLE C\nvoid g() { asm { NOP; } return; }\nvoid main() { g(); }\n.END\n",
-			expect: []uint8{0x00, 0xC9}, // NOP / RET
+			expect: []uint8{0x00}, // NOP; bare return emits nothing (inlined)
 		},
 		{
 			name:   "Package: qualified calls disambiguate same-named macros",

@@ -25,7 +25,9 @@ the Z80N opcode details see [Z80N_REFERENCE.md](Z80N_REFERENCE.md).
 
 For an orientation aimed at users coming from another assembler — what is
 familiar, what differs, and what zenas uniquely enables — see the
-[Zenas programming guide](ZENAS_PROGRAMMING.md).
+[Zenas programming guide](ZENAS_PROGRAMMING.md). For a worked, build-and-test
+walkthrough using packages and the test harness, see the
+[packaged-program tutorial](PACKAGED_PROGRAM_TUTORIAL.md).
 
 ## Running zenas
 
@@ -265,6 +267,22 @@ Each argument is substituted textually wherever its parameter name appears in
 the body. Macros may take zero, one, or several arguments, and a macro body may
 call other macros (including with multiple arguments), to any depth.
 
+**Parameter names may not be register or condition names.** Because arguments are
+substituted textually, a parameter named `b` in a body line like `LD (HL), b`
+would assemble as the register **B**, not the argument — wrong code with no error.
+zenas therefore rejects, at definition time, any parameter whose name is a
+register (`A`, `B`, ... `L`, `I`, `R`, `IXH`/`IXL`/`IYH`/`IYL`, the pairs `BC`,
+`DE`, `HL`, `SP`, `AF`, `IX`, `IY`) or a condition code (`NZ`, `Z`, `NC`, `C`,
+`PO`, `PE`, `P`, `M`). Name parameters for what they hold — `val`, `mask`,
+`addr`, `count` — and the collision cannot arise.
+
+**A macro may not share a name with an instruction mnemonic unless it is in a
+package.** A bare `add` is always the `ADD` instruction, so a macro named `add`
+with no package could never be reached. zenas rejects such a definition and
+directs you to place it in a package, where it is called qualified (`math.add`)
+and is unambiguous. (For C-style functions, the same applies, and a function,
+variable, or parameter may not be named after a register or condition either.)
+
 **Local labels** defined inside a macro body (like `loop:` above) are made
 unique on every expansion, so a macro containing a loop can be called more than
 once without the labels colliding.
@@ -328,6 +346,44 @@ value lives is the primitive tier's concern, not zenas's):
 - a non-void function must return: a bare `return;`, or falling off the end with
   no `return` at all, is an error, because the declared width would go
   undelivered.
+
+### Inline vs singleton expansion
+
+By default every instantiation of a macro emits a full copy of its body (inline
+expansion). For a body called many times this trades size for speed. The
+`.MACRO_MODE` directive selects the strategy:
+
+```
+.MACRO_MODE INLINE      ; the default: every call emits the full body
+.MACRO_MODE SINGLETON   ; emit the body once as a routine; every call is a CALL
+```
+
+In `SINGLETON` mode the body is emitted once, after the program code, as a
+labelled routine ending in `RET`, and each instantiation becomes a `CALL` to it.
+This is smaller whenever the body is larger than a `CALL` (3 bytes) and is called
+more than once, at the cost of the call/return overhead at run time.
+
+Parameters are passed through fixed memory slots, not registers or the stack.
+Each parameter gets one labelled slot (emitted once, beside the routine); a call
+writes its argument into the slot and then `CALL`s, and the body reads the
+parameter from the slot. So a body that uses `value` reads it as `(value)` — the
+parameter name denotes the slot's address:
+
+```
+.MACRO_MODE SINGLETON
+MACRO emit(uint8_t val)
+    LD A, (val)      ; read the argument from its slot
+    LD (HL), A
+    INC HL
+ENDMACRO
+```
+
+Because the slots are fixed locations, a parameterised singleton is **not
+re-entrant**: it must not call itself, directly or indirectly. zenas detects
+recursion among singleton macros and rejects it, pointing you to `INLINE` (or to
+an explicit subroutine that saves its context on the stack). Note too that a
+singleton reached from an interrupt that could fire mid-call would corrupt the
+slots; keep such routines `INLINE`.
 
 ## Packages
 
@@ -489,7 +545,7 @@ Common options (shared by both subcommands): `--max-steps=N`,
 `assert` adds `--expect="..."`, a comma-separated list of checks over registers
 (`A`, `BC`, `HL`, `AF`, the shadow pairs `AF_`/`BC_`/`DE_`/`HL_`, `SP`, `PC`,
 ...), flags (`CF` `ZF` `SF` `HF` `PF` `NF`, value 0 or 1), and memory bytes
-(`(0xC000)=0x42`). It prints `PASS`/`FAIL` per check.
+(`(0xC000)=0x42`, or by symbol, `(total)=0x42`). It prints `PASS`/`FAIL` per check.
 
 ```
 zenas run game.asm --preload=0xC000,sprites.bin --trace

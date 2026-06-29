@@ -18,11 +18,11 @@ uint8_t add_five(uint8_t value) {
 
 ; A function taking two parameters. By convention the first argument is in A
 ; and the second in B, so adding them is a single ADD A, B.
-uint8_t add_two_numbers(uint8_t a, uint8_t b) {
+uint8_t add_two_numbers(uint8_t first, uint8_t second) {
     asm {
         ADD A, B;
     }
-    return a;
+    return first;
 }
 
 ; A function with no parameters that loads a constant into A and returns it.

@@ -7,6 +7,8 @@ it lets you do that other assemblers cannot.
 
 For the exhaustive command and directive reference, see the
 [manual](MANUAL.md). This guide is the orientation; the manual is the dictionary.
+For a hands-on, build-and-test walkthrough, see the
+[packaged-program tutorial](PACKAGED_PROGRAM_TUTORIAL.md).
 
 ## Contents
 
@@ -187,6 +189,12 @@ assembler does. It is still sugar over the traditional macro system — the
 transpiler lowers it before assembly — so the two coexist. See the C-style
 examples bundled in [`examples/`](../examples/) (the `example1*-cstyle-*.asm`
 files) and the Macros section of the [manual](MANUAL.md).
+
+By default a macro's body is expanded at every call site. `.MACRO_MODE SINGLETON`
+instead emits the body once as a routine and turns each call into a `CALL` (with
+arguments passed through fixed memory slots) — smaller when a sizeable body is
+reused. See `examples/example15-macro-mode.asm` and the manual for the details
+and its constraints.
 
 ### Packages and disambiguation
 

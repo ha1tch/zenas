@@ -6,6 +6,8 @@ third-party assembler dependencies.
 
 - **[Programming guide](docs/ZENAS_PROGRAMMING.md)** — for users coming from
   another assembler: what's familiar, what differs, what's unique.
+- **[Packaged-program tutorial](docs/PACKAGED_PROGRAM_TUTORIAL.md)** — a worked
+  walkthrough building and testing a program with packages, `.EXPECT`, `.MATCH`.
 - **[Manual](docs/MANUAL.md)** — the command line, source language, directives,
   conditionals, build tags, INCLUDE/INCBIN, Z80N, and character sets.
 - **[Instruction set](docs/INSTRUCTION_SET.md)** — coverage by family.

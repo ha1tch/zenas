@@ -69,6 +69,40 @@ func (me *MacroExpander) ExpandMacro(call *MacroCall) ([]ParsedLine, error) {
 	return expandedLines, nil
 }
 
+// singletonSlotLabel returns the fixed memory-slot label for a macro parameter
+// under SINGLETON mode. The slot is where a caller writes the argument before the
+// CALL and where the routine body reads it.
+func singletonSlotLabel(pkg, name, param string) string {
+	base := name
+	if pkg != "" {
+		base = pkg + "_" + name
+	}
+	return "__var_" + base + "_" + param
+}
+
+// ExpandMacroSingleton builds the shared routine body for a macro under SINGLETON
+// mode. Each parameter is mapped to its fixed memory slot (an ExpressionSymbol of
+// the slot label), so a body reference like `LD A, (value)` becomes
+// `LD A, (__var_..._value)`. It returns the expanded body and the ordered slot
+// labels (one per parameter) so the caller can emit the slot storage and the
+// per-call argument writes.
+func (me *MacroExpander) ExpandMacroSingleton(macro *MacroDefinition) ([]ParsedLine, []string, error) {
+	substitution := make(map[string]*Expression)
+	var slots []string
+	for _, param := range macro.Parameters {
+		slot := singletonSlotLabel(macro.Package, macro.Name, param.Name)
+		slots = append(slots, slot)
+		substitution[strings.ToUpper(param.Name)] = &Expression{Type: ExpressionSymbol, Symbol: slot}
+	}
+
+	labelMap := me.generateUniqueLabelMap(macro)
+	body, err := me.expandMacroBody(macro.Body, substitution, labelMap)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error expanding singleton macro %s: %v", macro.Name, err)
+	}
+	return body, slots, nil
+}
+
 // createParameterSubstitution creates a map of parameter names to their values
 func (me *MacroExpander) createParameterSubstitution(macro *MacroDefinition, call *MacroCall) (map[string]*Expression, error) {
 	substitution := make(map[string]*Expression)

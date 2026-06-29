@@ -60,8 +60,8 @@ TRADITIONAL_DEMO:
 .CALLING_CONVENTION REGISTER_FAST
 
 // Simple arithmetic function - assembly code properly wrapped in asm{}
-uint8_t add_numbers(uint8_t a, uint8_t b) {
-    // Parameters: a in A register, b in B register
+uint8_t add_numbers(uint8_t lhs, uint8_t rhs) {
+    // Parameters: lhs in A register, rhs in B register
     // Return: result in A register
     asm {
         ADD A, B;
@@ -92,8 +92,8 @@ void fill_memory(uint16_t address, uint8_t value, uint8_t count) {
 }
 
 // Conditional operation
-uint8_t max_value(uint8_t a, uint8_t b) {
-    // Parameters: a in A, b in B
+uint8_t max_value(uint8_t lhs, uint8_t rhs) {
+    // Parameters: lhs in A, rhs in B
     // Return: maximum value in A
     asm {
         CP B;

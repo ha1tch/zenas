@@ -4,6 +4,56 @@ All notable changes to zenas are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.3] - 2026-06-29
+
+### Added
+
+- **Packaged-program tutorial** (`docs/PACKAGED_PROGRAM_TUTORIAL.md`): a worked
+  walkthrough that builds and tests a real program using packages, the traditional
+  macro system, and the `.EXPECT`/`.MATCH` test harness.
+- **C-style variable assignment.** A C-style function body may declare a variable
+  (`uint8_t total;`) and assign to it — either a literal (`total = 42;`) or the
+  result of a call (`total = math.add(20, 22);`). Storage is allocated once after
+  the code (never in the execution path), and the value is stored via the
+  accumulator, so the variable can be read back with `LD A, (total)`.
+- **Symbol names in `.EXPECT` / `--expect` memory targets.** A memory assertion's
+  address may now be a symbol (a label or variable) as well as a numeric address:
+  `--expect="(total)=42"` and `.EXPECT (total)=42` both work, resolving the symbol
+  against the assembled program.
+- **`.MACRO_MODE INLINE | SINGLETON` directive.** `INLINE` (the default) expands a
+  macro's body at every call. `SINGLETON` emits the body once as a routine and
+  turns each instantiation into a `CALL` — smaller when a sizeable body is reused.
+  Parameters are passed through fixed memory slots: each call writes its arguments
+  to per-parameter slots and then `CALL`s, and the body reads them from the slots
+  (so a parameter `value` is read as `(value)`). A parameterised singleton is not
+  re-entrant (the slots are fixed locations); zenas detects recursion among
+  singleton macros and rejects it, directing you to `INLINE`. See
+  `examples/example15-macro-mode.asm`.
+
+### Fixed
+
+- **C-style functions now produce runnable programs.** A `return` previously
+  emitted a `RET` even though function bodies are expanded inline, so an inlined
+  return aborted the *caller* and a `main()` calling another function stopped
+  early. A `return` now delivers its value in the convention's return register
+  (`A`) without a `RET`; standalone calls also load their arguments into the
+  convention's parameter registers, which they did not before. A C-style program
+  with function calls now runs to completion and computes correctly.
+- **Identifier collisions are now impossible.** A macro parameter, and a C-style
+  function, variable, or parameter, may no longer be named after a register or
+  condition code (`a`, `b`, `hl`, `nz`, ...); such a name was substituted into
+  the body and silently assembled as that register. A macro (traditional or
+  C-style) whose name collides with an instruction mnemonic must now be placed in
+  a package and called qualified (`math.add`) — a bare mnemonic-named macro could
+  never be reached and is rejected with a message directing the author to a
+  package. All such cases now fail at definition time with a clear error instead
+  of producing wrong code or a cryptic encoding failure. Two bundled examples
+  that used register-named C-style parameters were updated accordingly.
+- **IN/OUT no longer crash the run harness.** Running code that uses port I/O
+  previously dereferenced a nil I/O device and panicked the process. The harness
+  now attaches a null I/O device (reads return 0xFF, writes are discarded), so
+  such programs run to completion.
+
 ## [0.7.2] - 2026-06-29
 
 ### Added
