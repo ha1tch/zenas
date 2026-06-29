@@ -4,6 +4,32 @@ All notable changes to zenas are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-06-29
+
+### Added
+
+- **`build` command**: assembles the source and packages the result into
+  loadable artifacts, complementing `assemble` (which emits a raw binary).
+  Outputs are selected with `--tap`, `--tzx`, `--sna`, and `--z80`:
+  - Snapshots (`.sna`, `.z80` v3) carry full machine state and run immediately
+    at the entry point set by `--start`. The snapshot is overlaid on the booted
+    state of the model chosen with `--model` (48k, 128k, plus2, plus2a, plus3).
+  - Tape images (`.tap`, `.tzx`) encode the code as a CODE block. `--loader`
+    prepends a BASIC auto-run loader so `LOAD ""` runs the code; the loader is
+    generated as ASCII BASIC and tokenised via the zentools tokeniser.
+  - The recommended workflow is to use `.z80`/`.sna` snapshots for development
+    testing and tapes for wider distribution.
+- `--start` accepts an address (`0x8000`, `$8000`, `32768`) or a source label;
+  `--sp` overrides the stack pointer (default `0xFF00`) with a collision warning
+  when it would sit inside or just above the code; `-o` sets the output basename.
+- Spectrum tape names, +3DOS 8.3 names, and host filenames are handled as three
+  separate namespaces rather than being conflated.
+
+### Changed
+
+- Adds a direct dependency on `github.com/ha1tch/zentools` for the tape,
+  snapshot, and BASIC tokenisation formats.
+
 ## [0.6.3] - 2026-06-28
 
 ### Changed

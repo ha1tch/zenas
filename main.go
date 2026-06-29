@@ -24,6 +24,8 @@ func main() {
 	switch os.Args[1] {
 	case "assemble", "asm":
 		handleAssemble()
+	case "build":
+		handleBuild()
 	case "run":
 		handleRun()
 	case "assert":
@@ -49,6 +51,7 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  zenas assemble <input.asm> [output.bin] [options]")
+	fmt.Println("  zenas build <input.asm> [--tap] [--tzx] [--sna] [--z80] [--loader] [options]")
 	fmt.Println("  zenas version")
 	fmt.Println("  zenas help [--all]")
 	fmt.Println()

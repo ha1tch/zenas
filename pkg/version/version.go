@@ -6,4 +6,4 @@ package version
 
 // Version is the current version of zenas.
 // This MUST match the contents of the VERSION file.
-const Version = "0.6.3"
+const Version = "0.7.0"

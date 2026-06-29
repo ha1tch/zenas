@@ -54,6 +54,9 @@ go build -o build/zenas .
 zenas assemble <input.asm> [output.bin] [--hex] [--json=level] [--charset=name]
                 [--sym[=path]] [--define=NAME[=VAL]] [--tag NAME]
                 [--next | --cpu=Z80|Z80N]
+zenas build <input.asm> [--tap] [--tzx] [--sna] [--z80] [--loader]
+                [--start <addr|symbol>] [--sp <addr>]
+                [--model 48k|128k|plus2|plus2a|plus3] [-o <basename>]
 zenas version
 zenas help
 ```
@@ -65,6 +68,33 @@ select variants. Each tag defines `ZENAS_TAG_NAME` (a presence flag),
 the composite bitmask `ZENAS_TAGS` (always defined; 0 when no tags are set). Tags
 compose in `IF` conditions with `AND`, `OR`, `NOT` and parentheses - e.g.
 `IF ZENAS_TAG_debug AND ZENAS_TAG_plus3`. Examples are in [`examples/`](examples/).
+
+### build
+
+`zenas build` assembles the source and packages the result into loadable
+artifacts. Where `assemble` produces a raw binary, `build` emits one or more of:
+
+- `--sna`, `--z80` - snapshots. These carry a full machine state, so the code
+  loads and runs immediately at the entry point given by `--start`.
+- `--tap`, `--tzx` - tape images. The code is encoded as a CODE block; add
+  `--loader` to prepend a BASIC auto-run loader so `LOAD ""` runs it.
+
+**Recommended workflow: use `.z80` (v3) or `.sna` snapshots for development
+testing, and tapes (`.tap`/`.tzx`) as the primary format for wider
+distribution.** Snapshots get a build running in one step during iteration;
+tapes are what you ship.
+
+`--start` sets the entry point (an address such as `0x8000`, `$8000`, `32768`,
+or a label from the source) and is required for snapshot output and for
+`--loader`. `--sp` overrides the stack pointer (default `0xFF00`). `--model`
+selects the target machine for snapshot output (the snapshot is overlaid on that
+model's booted state). `-o` sets the output basename; each format appends its own
+extension.
+
+```
+zenas build game.asm --z80 --start main --model 128k     # snapshot for testing
+zenas build game.asm --tap --tzx --loader --start main   # tapes for release
+```
 
 ## Testing
 
