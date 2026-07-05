@@ -4,6 +4,32 @@ All notable changes to zenas are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.5] - 2026-07-05
+
+A documentation release. No changes to the assembler, emulator, or output.
+
+### Added
+
+- **Design rationale** (`docs/ZENAS_DESIGN.md`): the single idea connecting
+  the C-style macro layer, packages, build tags, and the test harness — the
+  typed linkage layer ("the seam"), what it deliberately includes and omits,
+  the practical guidelines that follow for structuring seam-styled programs,
+  and the commitments zenas development makes as a consequence.
+- **Seam comparison** (`docs/SEAM_COMPARISON.md`): a scored assessment of how
+  far other assemblers' native facilities go towards the same design, covering
+  the conventional Z80 assemblers and the macro-engine/table-driven class
+  (fasmg, customasm, Retro Assembler), with what each class teaches.
+
+### Changed
+
+- **README rework.** The introduction now leads with the assemble–run–assert
+  capability and a three-line example of the whole loop; the two previously
+  inconsistent documentation lists are consolidated into one complete list
+  (adding `docs/RUNTIME.md` and `docs/DIALECT_COMPATIBILITY.md`, which were
+  previously unlinked); the byte-for-byte pasmo claim gains a scope note
+  pointing at the measured dialect-compatibility reference; and an explicit
+  Requirements section states the Go 1.25 minimum for source builds.
+
 ## [0.7.3] - 2026-06-29
 
 ### Added

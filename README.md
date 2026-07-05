@@ -1,27 +1,34 @@
 # zenas
 
-A Z80 and Z80N macro assembler written in Go. It assembles Z80 source to raw
-machine code, or directly to runnable ZX Spectrum tapes and snapshots. No
-third-party assembler dependencies.
+A Z80 and Z80N macro assembler written in Go that can also **execute and test
+the code it assembles**. It assembles Z80 source to raw machine code, packages
+it directly into runnable ZX Spectrum tapes and snapshots, or runs it in a
+built-in Z80 emulator and asserts on the result. No third-party assembler
+dependencies; one static binary.
 
-- **[Programming guide](docs/ZENAS_PROGRAMMING.md)** — for users coming from
-  another assembler: what's familiar, what differs, what's unique.
-- **[Packaged-program tutorial](docs/PACKAGED_PROGRAM_TUTORIAL.md)** — a worked
-  walkthrough building and testing a program with packages, `.EXPECT`, `.MATCH`.
-- **[Manual](docs/MANUAL.md)** — the command line, source language, directives,
-  conditionals, build tags, INCLUDE/INCBIN, Z80N, and character sets.
-- **[Instruction set](docs/INSTRUCTION_SET.md)** — coverage by family.
+```sh
+# the whole loop, no other tools:
+zenas assemble game.asm game.bin          # bytes
+zenas build game.asm --z80 --start main   # runnable snapshot
+zenas assert math_test.asm                # run the test suite, exit non-zero on failure
+```
+
+Beyond the conventional core, zenas carries a small set of deliberate ideas —
+a typed macro linkage layer, package namespacing, Go-style build tags and test
+files — that together form a coherent design. New users should start with the
+**[programming guide](docs/ZENAS_PROGRAMMING.md)**; the reasoning behind the
+design is in **[the design rationale](docs/ZENAS_DESIGN.md)**.
 
 ## Commands
 
 | Command          | Does                                                        |
-| ---------------- | ---------------------------------------------------------- |
+| ---------------- | ----------------------------------------------------------- |
 | `zenas assemble` | assemble source to a raw binary (or a JSON report)          |
-| `zenas build`    | assemble and package into a tape or snapshot               |
-| `zenas run`      | assemble and execute in the built-in Z80 emulator          |
-| `zenas assert`   | execute and check the final machine state (CI-friendly)    |
+| `zenas build`    | assemble and package into a tape or snapshot                |
+| `zenas run`      | assemble and execute in the built-in Z80 emulator           |
+| `zenas assert`   | execute and check the final machine state (CI-friendly)     |
 | `zenas version`  | print the version                                           |
-| `zenas help`     | list options; `help --all` for the full reference          |
+| `zenas help`     | list options; `help --all` for the full reference           |
 
 ### Usage: assemble
 
@@ -100,8 +107,10 @@ zenas assert math_test.asm
 `--trace` shows each instruction, `--dump=START:LEN` dumps memory, and
 `--preload=ADDR,FILE` loads input data first. `assert` adds `--expect` checks
 over registers, flags, and memory bytes. A `*_test.asm` file with `test_*`
-routines each followed by an `.EXPECT` directive runs go-test style. See the
-[Zenas programming guide](docs/ZENAS_PROGRAMMING.md) for the full testing story.
+routines each followed by an `.EXPECT` directive runs go-test style — and
+`.EXPECT`/`.MATCH` are legal *only* in `*_test.asm` files, so test metadata can
+never leak into a shipped binary. See [`docs/RUNTIME.md`](docs/RUNTIME.md) for
+the complete run/assert reference.
 
 ## Install
 
@@ -109,13 +118,18 @@ routines each followed by an `.EXPECT` directive runs go-test style. See the
 go install github.com/ha1tch/zenas@latest
 ```
 
-Or build from a checkout (requires Go 1.25 or later):
+Or build from a checkout:
 
 ```sh
 make build         # -> build/zenas
-make test          # run the test suite
+make test          # run the Go test suite
 make smoke         # assemble the bundled examples as a sanity check
 ```
+
+### Requirements
+
+- Go 1.25 or later (build from source only; the released binaries have no
+  dependencies)
 
 ## What it assembles
 
@@ -131,15 +145,33 @@ reference assembler:
 - the **29** Z80N (ZX Spectrum Next) extensions (match sjasmplus), off by
   default, enabled with `--next`.
 
-See [`docs/INSTRUCTION_SET.md`](docs/INSTRUCTION_SET.md) for the coverage detail.
+See [`docs/INSTRUCTION_SET.md`](docs/INSTRUCTION_SET.md) for the coverage
+detail, including the scripts that reproduce the verification.
+
+A note on scope: the byte-for-byte match covers the shared instruction and
+data-directive core. Source that leans on pasmo's or sjasmplus's own
+directive layers (macro systems, `DEVICE`, structs) is a different matter —
+the measured state of that compatibility, gap by gap, is documented in
+[`docs/DIALECT_COMPATIBILITY.md`](docs/DIALECT_COMPATIBILITY.md).
 
 ## Documentation
 
-- **[Zenas programming guide](docs/ZENAS_PROGRAMMING.md)** — coming from another
+- **[Programming guide](docs/ZENAS_PROGRAMMING.md)** — coming from another
   assembler: what's familiar, what differs, and what zenas uniquely enables.
+- **[Design rationale](docs/ZENAS_DESIGN.md)** — the single idea behind
+  the unusual features, and what the C-style layer is (and is not) for.
+- **[Seam comparison](docs/SEAM_COMPARISON.md)** — how far other assemblers'
+  facilities go towards the same design, as a set of reference points.
+- **[Packaged-program tutorial](docs/PACKAGED_PROGRAM_TUTORIAL.md)** — a worked
+  walkthrough building and testing a program with packages, `.EXPECT`, `.MATCH`.
 - **[Manual](docs/MANUAL.md)** — full command line, language, and directives.
-- **[Instruction set](docs/INSTRUCTION_SET.md)** — coverage by family.
+- **[Runtime reference](docs/RUNTIME.md)** — running and testing code with
+  `run` and `assert`.
+- **[Instruction set](docs/INSTRUCTION_SET.md)** — coverage by family, with
+  reproducible verification.
 - **[Z80N reference](docs/Z80N_REFERENCE.md)** — Z80N opcode encodings.
+- **[Dialect compatibility](docs/DIALECT_COMPATIBILITY.md)** — the measured
+  state of pasmo and sjasmplus source compatibility.
 
 `zenas help` lists the common options; `zenas help --all` is the full reference.
 
