@@ -1,5 +1,11 @@
 # zenas
 
+[![test](https://github.com/ha1tch/zenas/actions/workflows/test.yml/badge.svg)](https://github.com/ha1tch/zenas/actions/workflows/test.yml)
+[![cross-build](https://github.com/ha1tch/zenas/actions/workflows/cross-build.yml/badge.svg)](https://github.com/ha1tch/zenas/actions/workflows/cross-build.yml)
+[![release](https://img.shields.io/github/v/tag/ha1tch/zenas?label=release)](https://github.com/ha1tch/zenas/releases)
+[![Go version](https://img.shields.io/github/go-mod/go-version/ha1tch/zenas)](go.mod)
+[![licence](https://img.shields.io/github/license/ha1tch/zenas)](LICENSE)
+
 A Z80 and Z80N macro assembler written in Go that can also **execute and test
 the code it assembles**. It assembles Z80 source to raw machine code, packages
 it directly into runnable ZX Spectrum tapes and snapshots, or runs it in a
