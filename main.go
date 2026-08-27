@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	
+
 	"github.com/ha1tch/zenas/assembler"
 	"github.com/ha1tch/zenas/pkg/version"
 )
@@ -20,7 +20,7 @@ func main() {
 		printUsage()
 		return
 	}
-	
+
 	switch os.Args[1] {
 	case "assemble", "asm":
 		handleAssemble()
@@ -56,7 +56,7 @@ func printUsage() {
 	fmt.Println("  zenas help [--all]")
 	fmt.Println()
 	fmt.Println("Common options:")
-	fmt.Println("  --next                Enable the Z80N (ZX Spectrum Next) instruction set")
+	fmt.Println("  --next, --zxnext      Enable the Z80N (ZX Spectrum Next) instruction set (--zxnext is sjasmplus's own spelling)")
 	fmt.Println("  --define=NAME[=VAL]   Pre-define a symbol; drives IF/IFDEF")
 	fmt.Println("  --tag NAME            Select a build tag (defines ZENAS_TAG_NAME)")
 	fmt.Println("  --sym[=path]          Write a pasmo-format symbol file")
@@ -89,7 +89,7 @@ func printUsageFull() {
 	fmt.Println("  --json=LEVEL          Emit a JSON report instead of a binary (see below)")
 	fmt.Println()
 	fmt.Println("Assembly options:")
-	fmt.Println("  --next                Enable the Z80N (ZX Spectrum Next) instruction set")
+	fmt.Println("  --next, --zxnext      Enable the Z80N (ZX Spectrum Next) instruction set (--zxnext is sjasmplus's own spelling)")
 	fmt.Println("  --cpu=Z80|Z80N        Select CPU target (default Z80); --cpu=Z80N == --next")
 	fmt.Println("  --define=NAME[=VAL]   Pre-define a symbol (default value 1); drives IF/IFDEF")
 	fmt.Println("  --tag NAME            Select a build tag. Defines ZENAS_TAG_NAME and")
@@ -127,19 +127,19 @@ func handleAssemble() {
 		fmt.Println("Usage: zenas assemble <input.asm> [output.bin] [options]  (see 'zenas help --all')")
 		return
 	}
-	
+
 	inputFile := os.Args[2]
 	outputFile := ""
 	jsonLevel := ""
-	hexMode := "auto" // auto, force, never
+	hexMode := "auto"  // auto, force, never
 	charset := "ascii" // default charset
 	showWarnings := true
-	symFile := ""     // path for the symbol file; "" means none
+	symFile := "" // path for the symbol file; "" means none
 	symRequested := false
 	defines := map[string]uint16{}
 	tags := []string{} // tag names in command-line order, for the ZENAS_TAGS bitmask
 	cpuTarget := "Z80" // CPU target: Z80 (default) or Z80N
-	
+
 	// Parse remaining arguments
 	for i := 3; i < len(os.Args); i++ {
 		arg := os.Args[i]
@@ -158,7 +158,8 @@ func handleAssemble() {
 			symRequested = true
 		} else if arg == "--sym" {
 			symRequested = true // path defaulted below from the output name
-		} else if arg == "--next" {
+		} else if arg == "--next" || arg == "--zxnext" {
+			// --zxnext: sjasmplus's own spelling for the same thing.
 			cpuTarget = "Z80N"
 		} else if strings.HasPrefix(arg, "--cpu=") {
 			cpuTarget = strings.ToUpper(strings.TrimPrefix(arg, "--cpu="))
@@ -198,7 +199,7 @@ func handleAssemble() {
 			outputFile = arg
 		}
 	}
-	
+
 	// Expand the collected build tags into symbols. Each distinct tag, in the
 	// order it first appears, gets the next bit. A tag named NAME produces:
 	//   ZENAS_TAG_NAME    = 1            (presence; for IFDEF and AND/OR/NOT)
@@ -240,7 +241,7 @@ func handleAssemble() {
 		ext := filepath.Ext(outputFile)
 		symFile = strings.TrimSuffix(outputFile, ext) + ".sym"
 	}
-	
+
 	// Handle JSON output
 	if jsonLevel != "" {
 		err := assembleToJSON(inputFile, jsonLevel, charset, showWarnings)
@@ -250,21 +251,21 @@ func handleAssemble() {
 		}
 		return
 	}
-	
+
 	// Normal binary output
 	err := assembleFile(inputFile, outputFile, symFile, hexMode, charset, showWarnings, defines, cpuTarget == "Z80N")
 	if err != nil {
 		fmt.Printf("Assembly failed: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	fmt.Printf("Assembly successful: %s -> %s (charset: %s)\n", inputFile, outputFile, charset)
 }
 
 func handleTest() {
 	fmt.Println("Running Z80 Assembler Tests...")
 	fmt.Println()
-	
+
 	tests := []struct {
 		name    string
 		source  string
@@ -454,16 +455,16 @@ func handleTest() {
 			expect: []uint8{0x42, 0x41, 0x42, 0x45}, // "BABE"
 		},
 	}
-	
+
 	passed := 0
 	total := len(tests)
-	
+
 	for i, test := range tests {
 		fmt.Printf("Test %d: %s\n", i+1, test.name)
-		
+
 		asm := assembler.New()
 		result, err := asm.AssembleString(test.source)
-		
+
 		// Tests that expect an error pass when assembly reports one.
 		if test.wantErr {
 			if err != nil || (result != nil && len(result.Errors) > 0) {
@@ -474,12 +475,12 @@ func handleTest() {
 			}
 			continue
 		}
-		
+
 		if err != nil {
 			fmt.Printf("  FAIL: Assembly failed: %v\n", err)
 			continue
 		}
-		
+
 		if len(result.Errors) > 0 {
 			fmt.Printf("  FAIL: Assembly errors:\n")
 			for _, e := range result.Errors {
@@ -487,14 +488,14 @@ func handleTest() {
 			}
 			continue
 		}
-		
+
 		if !bytesEqual(result.MachineCode, test.expect) {
 			fmt.Printf("  FAIL: Output mismatch\n")
 			fmt.Printf("    Expected: %s\n", formatBytes(test.expect))
 			fmt.Printf("    Got:      %s\n", formatBytes(result.MachineCode))
 			continue
 		}
-		
+
 		// Show warnings if any
 		if len(result.Warnings) > 0 {
 			fmt.Printf("  WARN: Warnings:\n")
@@ -502,13 +503,13 @@ func handleTest() {
 				fmt.Printf("    Line %d: %s\n", w.Line, w.Message)
 			}
 		}
-		
+
 		fmt.Printf("  PASS: Passed\n")
 		passed++
 	}
-	
+
 	fmt.Printf("\nTest Results: %d/%d passed\n", passed, total)
-	
+
 	if passed == total {
 		fmt.Println("All tests passed!")
 	} else {
@@ -529,11 +530,11 @@ type BasicJSON struct {
 
 type StandardJSON struct {
 	BasicJSON
-	InputFile   string                  `json:"inputFile"`
-	Errors      []assembler.AssemblyError `json:"errors,omitempty"`
-	Timestamp   string                  `json:"timestamp"`
-	Assembler   string                  `json:"assembler"`
-	Version     string                  `json:"version"`
+	InputFile string                    `json:"inputFile"`
+	Errors    []assembler.AssemblyError `json:"errors,omitempty"`
+	Timestamp string                    `json:"timestamp"`
+	Assembler string                    `json:"assembler"`
+	Version   string                    `json:"version"`
 }
 
 type WarningJSON struct {
@@ -543,12 +544,12 @@ type WarningJSON struct {
 }
 
 type InstructionInfo struct {
-	Address     uint16   `json:"address"`
-	Bytes       []string `json:"bytes"`
-	Source      string   `json:"source"`
-	Mnemonic    string   `json:"mnemonic,omitempty"`
-	Operands    []string `json:"operands,omitempty"`
-	ByteCount   int      `json:"byteCount"`
+	Address   uint16   `json:"address"`
+	Bytes     []string `json:"bytes"`
+	Source    string   `json:"source"`
+	Mnemonic  string   `json:"mnemonic,omitempty"`
+	Operands  []string `json:"operands,omitempty"`
+	ByteCount int      `json:"byteCount"`
 }
 
 type DetailedJSON struct {
@@ -568,8 +569,8 @@ type DataArea struct {
 }
 
 type CycleInfo struct {
-	MinCycles int `json:"minCycles"`
-	MaxCycles int `json:"maxCycles"`
+	MinCycles int    `json:"minCycles"`
+	MaxCycles int    `json:"maxCycles"`
 	Note      string `json:"note,omitempty"`
 }
 
@@ -581,11 +582,11 @@ type FullJSON struct {
 		Efficiency   float64   `json:"efficiency"` // bytes per instruction
 	} `json:"performance"`
 	Metadata struct {
-		EntryPoint  uint16 `json:"entryPoint,omitempty"`
-		CodeBlocks  int    `json:"codeBlocks"`
-		DataBlocks  int    `json:"dataBlocks"`
-		LabelCount  int    `json:"labelCount"`
-		ConstCount  int    `json:"constantCount"`
+		EntryPoint uint16 `json:"entryPoint,omitempty"`
+		CodeBlocks int    `json:"codeBlocks"`
+		DataBlocks int    `json:"dataBlocks"`
+		LabelCount int    `json:"labelCount"`
+		ConstCount int    `json:"constantCount"`
 	} `json:"metadata"`
 	BuildInfo struct {
 		Host        string `json:"host"`
@@ -603,60 +604,60 @@ func assembleToJSON(inputFile, level, charset string, showWarnings bool) error {
 	if !validLevels[level] {
 		return fmt.Errorf("invalid JSON level: %s (must be basic, standard, detailed, or full)", level)
 	}
-	
+
 	// Read input file
 	content, err := ioutil.ReadFile(inputFile)
 	if err != nil {
 		return fmt.Errorf("failed to read input file: %v", err)
 	}
-	
+
 	// Assemble
 	asm := assembler.New()
-	
+
 	// Set character set
 	if err := asm.SetCharset(charset); err != nil {
 		return fmt.Errorf("invalid charset '%s': %v", charset, err)
 	}
-	
+
 	asm.SetBaseDir(filepath.Dir(inputFile))
 	result, err := asm.AssembleString(string(content))
-	
+
 	// Create appropriate JSON structure based on level
 	switch level {
 	case "basic":
 		jsonData := createBasicJSON(result, err, showWarnings)
 		return outputJSON(jsonData)
-		
+
 	case "standard":
 		jsonData := createStandardJSON(result, err, inputFile, showWarnings)
 		return outputJSON(jsonData)
-		
+
 	case "detailed":
 		jsonData := createDetailedJSON(result, err, inputFile, string(content), showWarnings)
 		return outputJSON(jsonData)
-		
+
 	case "full":
 		jsonData := createFullJSON(result, err, inputFile, string(content), showWarnings)
 		return outputJSON(jsonData)
 	}
-	
+
 	return nil
 }
 
 func createBasicJSON(result *assembler.AssemblyResult, err error, showWarnings bool) BasicJSON {
 	success := err == nil && (result == nil || len(result.Errors) == 0)
-	
+
 	var machineCode []string
 	var symbols map[string]uint16
 	var warnings []WarningJSON
-	
+
 	if result != nil {
 		// Convert bytes to hex strings
 		for _, b := range result.MachineCode {
 			machineCode = append(machineCode, fmt.Sprintf("%02X", b))
 		}
 		symbols = result.Symbols
-		
+
 		// Include warnings if requested
 		if showWarnings {
 			for _, w := range result.Warnings {
@@ -668,7 +669,7 @@ func createBasicJSON(result *assembler.AssemblyResult, err error, showWarnings b
 			}
 		}
 	}
-	
+
 	return BasicJSON{
 		Success:     success,
 		MachineCode: machineCode,
@@ -680,7 +681,7 @@ func createBasicJSON(result *assembler.AssemblyResult, err error, showWarnings b
 
 func createStandardJSON(result *assembler.AssemblyResult, err error, inputFile string, showWarnings bool) StandardJSON {
 	basic := createBasicJSON(result, err, showWarnings)
-	
+
 	standard := StandardJSON{
 		BasicJSON: basic,
 		InputFile: inputFile,
@@ -688,17 +689,17 @@ func createStandardJSON(result *assembler.AssemblyResult, err error, inputFile s
 		Assembler: "zenas",
 		Version:   version.Version,
 	}
-	
+
 	if result != nil {
 		standard.Errors = result.Errors
 	}
-	
+
 	return standard
 }
 
 func createDetailedJSON(result *assembler.AssemblyResult, err error, inputFile, source string, showWarnings bool) DetailedJSON {
 	standard := createStandardJSON(result, err, inputFile, showWarnings)
-	
+
 	detailed := DetailedJSON{
 		StandardJSON: standard,
 		Instructions: []InstructionInfo{},
@@ -706,24 +707,24 @@ func createDetailedJSON(result *assembler.AssemblyResult, err error, inputFile, 
 		CodeSize:     0,
 		DataSize:     0,
 	}
-	
+
 	if result != nil && len(result.MachineCode) > 0 {
 		// Analyze the assembled code (simplified analysis)
 		detailed.Instructions = analyzeInstructions(result.MachineCode, source)
 		detailed.DataAreas = analyzeDataAreas(result.MachineCode)
 		detailed.CodeSize = len(result.MachineCode)
 	}
-	
+
 	return detailed
 }
 
 func createFullJSON(result *assembler.AssemblyResult, err error, inputFile, source string, showWarnings bool) FullJSON {
 	detailed := createDetailedJSON(result, err, inputFile, source, showWarnings)
-	
+
 	full := FullJSON{
 		DetailedJSON: detailed,
 	}
-	
+
 	if result != nil {
 		// Calculate performance metrics
 		full.Performance.Instructions = len(detailed.Instructions)
@@ -731,19 +732,19 @@ func createFullJSON(result *assembler.AssemblyResult, err error, inputFile, sour
 			full.Performance.Efficiency = float64(detailed.CodeSize) / float64(full.Performance.Instructions)
 		}
 		full.Performance.TotalCycles = estimateCycles(detailed.Instructions)
-		
+
 		// Calculate metadata
 		full.Metadata.LabelCount = countLabels(result.Symbols)
 		full.Metadata.ConstCount = countConstants(result.Symbols)
 		full.Metadata.CodeBlocks = len(detailed.DataAreas)
-		
+
 		// Build info
 		full.BuildInfo.Host = "zenas-assembler"
 		full.BuildInfo.BuildTime = "2024-09-16T18:30:00Z"
 		full.BuildInfo.SourceLines = strings.Count(source, "\n") + 1
 		full.BuildInfo.SourceSize = len(source)
 	}
-	
+
 	return full
 }
 
@@ -758,45 +759,45 @@ func warningTypeToString(wt assembler.WarningType) string {
 func analyzeInstructions(machineCode []uint8, source string) []InstructionInfo {
 	// Simplified instruction analysis
 	instructions := []InstructionInfo{}
-	
+
 	// Parse source to correlate with machine code
 	lines := strings.Split(source, "\n")
 	addr := uint16(0)
 	byteIndex := 0
-	
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, ";") {
 			continue
 		}
-		
+
 		// Skip directives for now (would need more sophisticated parsing)
 		if strings.HasPrefix(line, ".") {
 			continue
 		}
-		
+
 		// Simple heuristic: assume each non-empty, non-comment line is an instruction
 		if byteIndex < len(machineCode) {
 			// Guess instruction length (simplified)
 			instrLen := guessInstructionLength(machineCode, byteIndex)
-			
+
 			bytes := []string{}
 			for i := 0; i < instrLen && byteIndex+i < len(machineCode); i++ {
 				bytes = append(bytes, fmt.Sprintf("%02X", machineCode[byteIndex+i]))
 			}
-			
+
 			instructions = append(instructions, InstructionInfo{
 				Address:   addr,
 				Bytes:     bytes,
 				Source:    line,
 				ByteCount: instrLen,
 			})
-			
+
 			addr += uint16(instrLen)
 			byteIndex += instrLen
 		}
 	}
-	
+
 	return instructions
 }
 
@@ -804,9 +805,9 @@ func guessInstructionLength(machineCode []uint8, index int) int {
 	if index >= len(machineCode) {
 		return 0
 	}
-	
+
 	opcode := machineCode[index]
-	
+
 	// Simple length determination based on opcode patterns
 	switch {
 	case opcode == 0xCB: // CB prefix
@@ -842,14 +843,14 @@ func estimateCycles(instructions []InstructionInfo) CycleInfo {
 	// Simplified cycle estimation
 	totalMin := 0
 	totalMax := 0
-	
+
 	for _, instr := range instructions {
 		// Very rough cycle estimates based on byte count
 		cycles := instr.ByteCount * 4 // Rough average
 		totalMin += cycles
 		totalMax += cycles + 3 // Add some variation for conditional instructions
 	}
-	
+
 	return CycleInfo{
 		MinCycles: totalMin,
 		MaxCycles: totalMax,
@@ -881,10 +882,10 @@ func countConstants(symbols map[string]uint16) int {
 
 func isConstantName(name string) bool {
 	// Simple heuristic for constant names
-	return strings.Contains(name, "COUNT") || 
-		   strings.Contains(name, "CHAR") || 
-		   strings.Contains(name, "SIZE") ||
-		   strings.HasSuffix(name, "_CONST")
+	return strings.Contains(name, "COUNT") ||
+		strings.Contains(name, "CHAR") ||
+		strings.Contains(name, "SIZE") ||
+		strings.HasSuffix(name, "_CONST")
 }
 
 func outputJSON(data interface{}) error {
@@ -892,7 +893,7 @@ func outputJSON(data interface{}) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal JSON: %v", err)
 	}
-	
+
 	fmt.Println(string(jsonBytes))
 	return nil
 }
@@ -974,7 +975,7 @@ func assembleFile(inputFile, outputFile, symFile, hexMode, charset string, showW
 	if err != nil {
 		return fmt.Errorf("failed to read input file: %v", err)
 	}
-	
+
 	// Assemble
 	asm := assembler.New()
 
@@ -982,7 +983,7 @@ func assembleFile(inputFile, outputFile, symFile, hexMode, charset string, showW
 	if z80n {
 		asm.EnableZ80N()
 	}
-	
+
 	// Set character set
 	if err := asm.SetCharset(charset); err != nil {
 		return fmt.Errorf("invalid charset '%s': %v", charset, err)
@@ -992,10 +993,10 @@ func assembleFile(inputFile, outputFile, symFile, hexMode, charset string, showW
 	for name, val := range defines {
 		asm.Define(name, val)
 	}
-	
+
 	asm.SetBaseDir(filepath.Dir(inputFile))
 	result, err := asm.AssembleString(string(content))
-	
+
 	// Show assembly errors first if they exist
 	if result != nil && len(result.Errors) > 0 {
 		fmt.Printf("Assembly errors:\n")
@@ -1004,7 +1005,7 @@ func assembleFile(inputFile, outputFile, symFile, hexMode, charset string, showW
 		}
 		return fmt.Errorf("assembly failed with %d error(s)", len(result.Errors))
 	}
-	
+
 	// Show warnings if requested and they exist
 	if showWarnings && result != nil && len(result.Warnings) > 0 {
 		fmt.Printf("Assembly warnings:\n")
@@ -1013,12 +1014,12 @@ func assembleFile(inputFile, outputFile, symFile, hexMode, charset string, showW
 		}
 		fmt.Println()
 	}
-	
+
 	// Check for other errors
 	if err != nil {
 		return err
 	}
-	
+
 	// Write output file
 	err = ioutil.WriteFile(outputFile, result.MachineCode, 0644)
 	if err != nil {
@@ -1031,21 +1032,21 @@ func assembleFile(inputFile, outputFile, symFile, hexMode, charset string, showW
 			return fmt.Errorf("failed to write symbol file: %v", err)
 		}
 	}
-	
+
 	// Print assembly summary
 	fmt.Printf("Assembled %d bytes", len(result.MachineCode))
 	if showWarnings && result != nil && len(result.Warnings) > 0 {
 		fmt.Printf(" (with %d warning(s))", len(result.Warnings))
 	}
 	fmt.Println()
-	
+
 	if len(result.Symbols) > 0 {
 		fmt.Println("\nSymbol Table:")
 		for symbol, addr := range result.Symbols {
 			fmt.Printf("  %-12s = $%04X (%d)\n", symbol, addr, addr)
 		}
 	}
-	
+
 	// Print hex dump based on mode
 	shouldShowHex := false
 	switch hexMode {
@@ -1056,7 +1057,7 @@ func assembleFile(inputFile, outputFile, symFile, hexMode, charset string, showW
 	case "auto":
 		shouldShowHex = len(result.MachineCode) > 0 && len(result.MachineCode) <= 64
 	}
-	
+
 	if shouldShowHex {
 		fmt.Printf("\nHex Dump:\n")
 		for i := 0; i < len(result.MachineCode); i += 8 {
@@ -1071,7 +1072,7 @@ func assembleFile(inputFile, outputFile, symFile, hexMode, charset string, showW
 			fmt.Println()
 		}
 	}
-	
+
 	return nil
 }
 

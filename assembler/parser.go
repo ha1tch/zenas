@@ -1058,6 +1058,7 @@ func (p *Parser) isDirectiveIdentifier(name string) bool {
 		"INCBIN": true,
 		"IF": true, "IFDEF": true, "IFNDEF": true,
 		"ELSE": true, "ENDIF": true,
+		"OPT": true,
 	}
 	return directiveNames[strings.ToUpper(name)]
 }
@@ -1082,6 +1083,25 @@ func (p *Parser) parseDirectiveFromIdentifier() (*Directive, error) {
 			})
 			p.advance()
 		}
+		return directive, nil
+	}
+
+	// OPT takes a single bare option name (eg "OPT ZXNEXT"), never a
+	// resolvable symbol reference, so it is parsed the same deliberate way
+	// as END's own optional argument above rather than through the generic
+	// expression path below -- an option name is never going to be a
+	// previously-defined label, and routing it through symbol evaluation
+	// would be relying on that evaluation happening to tolerate an unknown
+	// symbol rather than on anything actually designed for this.
+	if directiveName == "OPT" {
+		if p.current.Type != TokenIdentifier {
+			return nil, fmt.Errorf("OPT directive requires an option name (eg OPT ZXNEXT)")
+		}
+		directive.Arguments = append(directive.Arguments, &Expression{
+			Type:   ExpressionSymbol,
+			Symbol: p.current.Value,
+		})
+		p.advance()
 		return directive, nil
 	}
 

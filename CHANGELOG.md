@@ -4,6 +4,36 @@ All notable changes to zenas are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.1] - 2026-08-27
+
+### Added
+
+- **`--zxnext`**: recognised everywhere `--next` is (assemble, run,
+  assert) as a plain synonym -- sjasmplus's own spelling for enabling
+  the Z80N instruction set. No behaviour change from `--next`; purely
+  a compatibility alias so a command line written for sjasmplus works
+  unmodified.
+
+## [0.8.0] - 2026-08-21
+
+### Added
+
+- **`OPT ZXNEXT` directive**: a source file can now enable Z80N (ZX
+  Spectrum Next) instructions itself, the same as the command line's
+  `--next` / the library's `EnableZ80N()` -- so a source that needs Z80N
+  instructions carries that requirement in itself, rather than depending on
+  whoever invokes the assembler to remember the right flag. This matches
+  the inline-directive convention SNasm and other Z80N-aware assemblers
+  already use, closing a real cross-assembler compatibility gap: a source
+  written with SNasm's own `OPT ZXNEXT` line previously had to be edited
+  before it would assemble under zenas at all (an unrelated but genuinely
+  unrecognised directive, not merely a different way of spelling the same
+  thing) -- it now assembles unchanged. Unknown `OPT` options, and a bare
+  `OPT` with no option name, are both clear assembly errors rather than
+  silently ignored.
+- First test coverage for `assembler` package (`assembler/opt_test.go`,
+  five cases covering the new directive) -- there was none before this.
+
 ## [0.7.5] - 2026-07-05
 
 A documentation release. No changes to the assembler, emulator, or output.

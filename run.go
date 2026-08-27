@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ha1tch/zenas/assembler"
 	"github.com/ha1tch/zen80/memory"
 	"github.com/ha1tch/zen80/z80"
+	"github.com/ha1tch/zenas/assembler"
 )
 
 // runOptions holds the parsed options for the `run` subcommand.
@@ -75,8 +75,8 @@ type runResult struct {
 	DE_ uint16 `json:"de_"`
 	HL_ uint16 `json:"hl_"`
 
-	Flags  string     `json:"flags"`
-	Halted bool       `json:"halted"`
+	Flags  string      `json:"flags"`
+	Halted bool        `json:"halted"`
 	Trace  []traceStep `json:"trace,omitempty"`
 	Memory *memoryDump `json:"memory,omitempty"`
 }
@@ -430,9 +430,10 @@ func flagBit(letter string) uint8 {
 }
 
 // parseExpects parses a comma-separated list of assertions:
-//   register: A=0x42, HL=0x8000, SP=65000
-//   flag:     CF=1, ZF=0  (CF SF ZF HF PF NF; value 0 or 1)
-//   memory:   (0xC000)=0x42
+//
+//	register: A=0x42, HL=0x8000, SP=65000
+//	flag:     CF=1, ZF=0  (CF SF ZF HF PF NF; value 0 or 1)
+//	memory:   (0xC000)=0x42
 var registerNames = map[string]bool{
 	"A": true, "F": true, "B": true, "C": true, "D": true, "E": true,
 	"H": true, "L": true, "AF": true, "BC": true, "DE": true, "HL": true,
@@ -807,7 +808,8 @@ func parseRunArgs(args []string) (runOptions, error) {
 			opts.trace = true
 		case arg == "--hex":
 			opts.hexDump = true
-		case arg == "--next":
+		case arg == "--next", arg == "--zxnext":
+			// --zxnext: sjasmplus's own spelling for the same thing.
 			opts.next = true
 		case arg == "--json":
 			opts.jsonLevel = "standard"

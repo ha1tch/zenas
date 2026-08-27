@@ -1743,6 +1743,23 @@ func (a *Assembler) processDirective(directive *Directive, result *AssemblyResul
 	case ".END", "END":
 		// .END directive - marks end of assembly
 
+	case "OPT":
+		if len(directive.Arguments) != 1 || directive.Arguments[0].Type != ExpressionSymbol {
+			return fmt.Errorf("OPT directive requires a single option name (eg OPT ZXNEXT)")
+		}
+		switch strings.ToUpper(directive.Arguments[0].Symbol) {
+		case "ZXNEXT":
+			// Equivalent to the command line's own --next / EnableZ80N(): a
+			// source file that wants Z80N instructions carries that
+			// requirement in itself, rather than depending on whoever
+			// invokes the assembler remembering the right flag. Idempotent
+			// with an actual --next also given, and safe to call more than
+			// once if a source has multiple OPT ZXNEXT lines.
+			a.encoder.EnableZ80N()
+		default:
+			return fmt.Errorf("unknown OPT option: %s", directive.Arguments[0].Symbol)
+		}
+
 	default:
 		return fmt.Errorf("unknown directive: %s", directive.Name)
 	}
