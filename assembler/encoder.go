@@ -29,17 +29,17 @@ var (
 		// Undocumented: IXH/IXL and IYH/IYL are handled in prefix encoding
 		"IXH": 4, "IXL": 5, "IYH": 4, "IYL": 5,
 	}
-	
+
 	register16Map = map[string]uint8{
 		"BC": 0, "DE": 1, "HL": 2, "SP": 3,
 		"IX": 2, "IY": 2, // Will use DD/FD prefix
 	}
-	
+
 	// Stack register mappings (PUSH/POP use different encoding)
 	stackRegisterMap = map[string]uint8{
 		"BC": 0, "DE": 1, "HL": 2, "AF": 3,
 	}
-	
+
 	conditionMap = map[string]uint8{
 		"NZ": 0, "Z": 1, "NC": 2, "C": 3,
 		"PO": 4, "PE": 5, "P": 6, "M": 7,
@@ -113,7 +113,7 @@ func (e *Encoder) Encode(mnemonic string, operands []*ResolvedOperand) ([]uint8,
 	if !exists {
 		return nil, fmt.Errorf("unknown instruction: %s", mnemonic)
 	}
-	
+
 	// Find matching template based on operand types. Several templates can match
 	// the same operand *types* (e.g. JP (HL) and the Z80N JP (C) both match
 	// JP [indirect]); a template may still reject the specific operands at encode
@@ -135,7 +135,7 @@ func (e *Encoder) Encode(mnemonic string, operands []*ResolvedOperand) ([]uint8,
 	if firstErr != nil {
 		return nil, firstErr
 	}
-	
+
 	// Create better error message showing what operands we have
 	var operandDesc []string
 	for _, op := range operands {
@@ -160,7 +160,7 @@ func (e *Encoder) Encode(mnemonic string, operands []*ResolvedOperand) ([]uint8,
 			operandDesc = append(operandDesc, fmt.Sprintf("unknown:%v", op.Type))
 		}
 	}
-	
+
 	return nil, fmt.Errorf("no matching encoding for %s with operands: [%s]", mnemonic, strings.Join(operandDesc, ", "))
 }
 
@@ -169,13 +169,13 @@ func (e *Encoder) matchesTemplate(template *InstructionTemplate, operands []*Res
 	if len(template.OperandTypes) != len(operands) {
 		return false
 	}
-	
+
 	for i, expectedType := range template.OperandTypes {
 		if !e.operandTypeMatches(expectedType, operands[i]) {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -187,8 +187,8 @@ func (e *Encoder) operandTypeMatches(expected OperandType, operand *ResolvedOper
 	case OperandRegister16:
 		return operand.Type == OperandRegister16
 	case OperandImmediate8:
-		return operand.Type == OperandImmediate8 || 
-		       (operand.Type == OperandImmediate16 && operand.Value >= -128 && operand.Value <= 255)
+		return operand.Type == OperandImmediate8 ||
+			(operand.Type == OperandImmediate16 && operand.Value >= -128 && operand.Value <= 255)
 	case OperandImmediate16:
 		return operand.Type == OperandImmediate16 || operand.Type == OperandImmediate8
 	case OperandIndirect:
@@ -211,13 +211,13 @@ func (e *Encoder) initializeInstructions() {
 	e.addInstruction("LD", []OperandType{OperandRegister8, OperandIndirect}, 0x46, 0x00, 7, encodeLDrHL)
 	e.addInstruction("LD", []OperandType{OperandIndirect, OperandRegister8}, 0x70, 0x00, 7, encodeLDHLr)
 	e.addInstruction("LD", []OperandType{OperandIndirect, OperandImmediate8}, 0x36, 0x00, 10, encodeLDHLn)
-	
+
 	// Extended 16-bit loads
 	e.addInstruction("LD", []OperandType{OperandRegister16, OperandImmediate16}, 0x01, 0x00, 10, encodeLDrpnn)
 	e.addInstruction("LD", []OperandType{OperandRegister16, OperandIndirect}, 0x2A, 0x00, 16, encodeLDrpaddr)
 	e.addInstruction("LD", []OperandType{OperandIndirect, OperandRegister16}, 0x22, 0x00, 16, encodeLDaddrrp)
 	e.addInstruction("LD", []OperandType{OperandRegister16, OperandRegister16}, 0xF9, 0x00, 6, encodeLDSPHL)
-	
+
 	// Block 2: ALU operations (from executeBlock2)
 	e.addInstruction("ADD", []OperandType{OperandRegister8, OperandRegister8}, 0x80, 0x00, 4, encodeALUr)
 	e.addInstruction("ADC", []OperandType{OperandRegister8, OperandRegister8}, 0x88, 0x00, 4, encodeALUr)
@@ -227,7 +227,7 @@ func (e *Encoder) initializeInstructions() {
 	e.addInstruction("XOR", []OperandType{OperandRegister8}, 0xA8, 0x00, 4, encodeALUr)
 	e.addInstruction("OR", []OperandType{OperandRegister8}, 0xB0, 0x00, 4, encodeALUr)
 	e.addInstruction("CP", []OperandType{OperandRegister8}, 0xB8, 0x00, 4, encodeALUr)
-	
+
 	// ALU with immediate values
 	e.addInstruction("ADD", []OperandType{OperandRegister8, OperandImmediate8}, 0xC6, 0x00, 7, encodeALUn)
 	e.addInstruction("ADC", []OperandType{OperandRegister8, OperandImmediate8}, 0xCE, 0x00, 7, encodeALUn)
@@ -254,11 +254,11 @@ func (e *Encoder) initializeInstructions() {
 	// INC/DEC on (HL) / (IX+d) / (IY+d).
 	e.addInstruction("INC", []OperandType{OperandIndirect}, 0x34, 0x00, 11, encodeINCDECIndirect)
 	e.addInstruction("DEC", []OperandType{OperandIndirect}, 0x35, 0x00, 11, encodeINCDECIndirect)
-	
+
 	// Block 0: Miscellaneous (from executeBlock0)
 	e.addInstruction("NOP", []OperandType{}, 0x00, 0x00, 4, encodeSimple)
 	e.addInstruction("HALT", []OperandType{}, 0x76, 0x00, 4, encodeSimple)
-	
+
 	// Flag and interrupt control instructions
 	e.addInstruction("CCF", []OperandType{}, 0x3F, 0x00, 4, encodeSimple)
 	e.addInstruction("SCF", []OperandType{}, 0x37, 0x00, 4, encodeSimple)
@@ -266,10 +266,10 @@ func (e *Encoder) initializeInstructions() {
 	e.addInstruction("DAA", []OperandType{}, 0x27, 0x00, 4, encodeSimple)
 	e.addInstruction("EI", []OperandType{}, 0xFB, 0x00, 4, encodeSimple)
 	e.addInstruction("DI", []OperandType{}, 0xF3, 0x00, 4, encodeSimple)
-	
+
 	e.addInstruction("INC", []OperandType{OperandRegister8}, 0x04, 0x00, 4, encodeINCr)
 	e.addInstruction("DEC", []OperandType{OperandRegister8}, 0x05, 0x00, 4, encodeDECr)
-	
+
 	// 16-bit operations
 	e.addInstruction("LD", []OperandType{OperandRegister16, OperandImmediate16}, 0x01, 0x00, 10, encodeLDrpnn)
 	e.addInstruction("LD", []OperandType{OperandRegister16, OperandIndirect}, 0x2A, 0x00, 16, encodeLDrpaddr)
@@ -278,11 +278,11 @@ func (e *Encoder) initializeInstructions() {
 	e.addInstruction("ADD", []OperandType{OperandRegister16, OperandRegister16}, 0x09, 0x00, 11, encodeADDHLrp)
 	e.addInstruction("INC", []OperandType{OperandRegister16}, 0x03, 0x00, 6, encodeINCrp)
 	e.addInstruction("DEC", []OperandType{OperandRegister16}, 0x0B, 0x00, 6, encodeDECrp)
-	
+
 	// Stack operations (PUSH/POP) - ADDED
 	e.addInstruction("PUSH", []OperandType{OperandRegister16}, 0xC5, 0x00, 11, encodePUSHrp)
 	e.addInstruction("POP", []OperandType{OperandRegister16}, 0xC1, 0x00, 10, encodePOPrp)
-	
+
 	// Control flow (from executeBlock3)
 	e.addInstruction("JP", []OperandType{OperandImmediate16}, 0xC3, 0x00, 10, encodeJPnn)
 	e.addInstruction("JP", []OperandType{OperandCondition, OperandImmediate16}, 0xC2, 0x00, 10, encodeJPccnn)
@@ -312,11 +312,11 @@ func (e *Encoder) initializeInstructions() {
 	e.addInstruction("OUTD", []OperandType{}, 0xAB, 0xED, 16, encodeSimple)
 	e.addInstruction("OTIR", []OperandType{}, 0xB3, 0xED, 16, encodeSimple)
 	e.addInstruction("OTDR", []OperandType{}, 0xBB, 0xED, 16, encodeSimple)
-	
+
 	// I/O instructions
 	e.addInstruction("OUT", []OperandType{OperandIndirect, OperandRegister8}, 0xD3, 0x00, 11, encodeOUTnA)
 	e.addInstruction("IN", []OperandType{OperandRegister8, OperandIndirect}, 0xDB, 0x00, 11, encodeINAn)
-	
+
 	// CB-prefixed instructions (from executeCB)
 	e.addInstruction("RLC", []OperandType{OperandRegister8}, 0x00, 0xCB, 8, encodeCBr)
 	e.addInstruction("RRC", []OperandType{OperandRegister8}, 0x08, 0xCB, 8, encodeCBr)
@@ -393,7 +393,7 @@ func (e *Encoder) addInstruction(mnemonic string, operandTypes []OperandType, ba
 		Prefix:       prefix,
 		Cycles:       cycles,
 	}
-	
+
 	e.instructions[mnemonic] = append(e.instructions[mnemonic], template)
 }
 
@@ -438,7 +438,7 @@ func encodeLDrr(template *InstructionTemplate, operands []*ResolvedOperand) ([]u
 func encodeLDrn(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
 	reg := register8Map[operands[0].Register]
 	value := uint8(operands[1].Value)
-	
+
 	opcode := 0x06 | (reg << 3)
 	return []uint8{opcode, value}, nil
 }
@@ -448,7 +448,7 @@ func encodeLDrHL(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 	if operands[1].Type != OperandIndirect {
 		return nil, fmt.Errorf("expected indirect operand as source")
 	}
-	
+
 	// Handle different indirect addressing modes
 	if operands[1].Register == "HL" {
 		// LD r,(HL)
@@ -475,7 +475,7 @@ func encodeLDrHL(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 		opcode := 0x46 | (reg << 3)
 		return []uint8{prefix, opcode, byte(int8(operands[1].Displacement))}, nil
 	}
-	
+
 	return nil, fmt.Errorf("unsupported indirect addressing mode: (%s)", operands[1].Register)
 }
 
@@ -498,6 +498,7 @@ func indexPrefix(reg string) uint8 {
 //     need two prefixes).
 //   - A half register cannot coexist with an indexed memory operand (IX+d)/(IY+d)
 //     in the same instruction, since the prefix can only mean one thing.
+//
 // Both illegal cases are rejected rather than silently producing a different
 // instruction.
 func applyHalfIndexPrefix(code []uint8, operands []*ResolvedOperand) ([]uint8, error) {
@@ -541,7 +542,7 @@ func encodeLDHLr(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 	if operands[0].Type != OperandIndirect {
 		return nil, fmt.Errorf("expected indirect operand as destination")
 	}
-	
+
 	// Handle different indirect addressing modes
 	if operands[0].Register == "HL" {
 		// LD (HL),r
@@ -568,7 +569,7 @@ func encodeLDHLr(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 		opcode := 0x70 | reg
 		return []uint8{prefix, opcode, byte(int8(operands[0].Displacement))}, nil
 	}
-	
+
 	return nil, fmt.Errorf("unsupported indirect addressing mode: (%s)", operands[0].Register)
 }
 func encodeLDHLn(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
@@ -586,7 +587,7 @@ func encodeLDHLn(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 // encodeALUr encodes ALU operations with register - mirrors executeBlock2 pattern 10yyyzzz
 func encodeALUr(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
 	var reg uint8
-	
+
 	if len(operands) == 1 {
 		// SUB r, AND r, XOR r, OR r, CP r
 		reg = register8Map[operands[0].Register]
@@ -599,7 +600,7 @@ func encodeALUr(template *InstructionTemplate, operands []*ResolvedOperand) ([]u
 	} else {
 		return nil, fmt.Errorf("invalid number of operands for ALU instruction")
 	}
-	
+
 	opcode := template.BaseOpcode | reg
 	return []uint8{opcode}, nil
 }
@@ -607,7 +608,7 @@ func encodeALUr(template *InstructionTemplate, operands []*ResolvedOperand) ([]u
 // encodeALUn encodes ALU operations with immediate value
 func encodeALUn(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
 	var value uint8
-	
+
 	if len(operands) == 1 {
 		// SUB n, AND n, XOR n, OR n, CP n
 		value = uint8(operands[0].Value)
@@ -620,7 +621,7 @@ func encodeALUn(template *InstructionTemplate, operands []*ResolvedOperand) ([]u
 	} else {
 		return nil, fmt.Errorf("invalid number of operands for ALU instruction")
 	}
-	
+
 	return []uint8{template.BaseOpcode, value}, nil
 }
 
@@ -743,7 +744,7 @@ func encodePUSHrp(template *InstructionTemplate, operands []*ResolvedOperand) ([
 	if !exists {
 		return nil, fmt.Errorf("invalid register for PUSH: %s", operands[0].Register)
 	}
-	
+
 	opcode := 0xC5 | (rp << 4)
 	return []uint8{opcode}, nil
 }
@@ -757,7 +758,7 @@ func encodePOPrp(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 	if !exists {
 		return nil, fmt.Errorf("invalid register for POP: %s", operands[0].Register)
 	}
-	
+
 	opcode := 0xC1 | (rp << 4)
 	return []uint8{opcode}, nil
 }
@@ -766,7 +767,7 @@ func encodePOPrp(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 func encodeLDrpaddr(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
 	reg := operands[0].Register
 	addr := uint16(operands[1].Value)
-	
+
 	if reg == "HL" {
 		// LD HL,(nn) - 0x2A
 		return []uint8{0x2A, uint8(addr), uint8(addr >> 8)}, nil
@@ -787,11 +788,11 @@ func encodeLDrpaddr(template *InstructionTemplate, operands []*ResolvedOperand) 
 	}
 }
 
-// encodeLDaddrrp encodes LD (nn),rp - store 16-bit register to memory  
+// encodeLDaddrrp encodes LD (nn),rp - store 16-bit register to memory
 func encodeLDaddrrp(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
 	addr := uint16(operands[0].Value)
 	reg := operands[1].Register
-	
+
 	if reg == "HL" {
 		// LD (nn),HL - 0x22
 		return []uint8{0x22, uint8(addr), uint8(addr >> 8)}, nil
@@ -838,14 +839,14 @@ func encodeJPccnn(template *InstructionTemplate, operands []*ResolvedOperand) ([
 	if len(operands) != 2 {
 		return nil, fmt.Errorf("JP cc,nn requires exactly 2 operands")
 	}
-	
+
 	if operands[0].Type != OperandCondition {
 		return nil, fmt.Errorf("first operand must be a condition code")
 	}
-	
+
 	cc := conditionMap[operands[0].Condition]
 	addr := uint16(operands[1].Value)
-	
+
 	opcode := 0xC2 | (cc << 3)
 	return []uint8{opcode, uint8(addr), uint8(addr >> 8)}, nil
 }
@@ -864,7 +865,7 @@ func encodeJRccd(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 	if !exists {
 		return nil, fmt.Errorf("invalid condition for JR: %s", operands[0].Condition)
 	}
-	
+
 	disp := int8(operands[1].Value)
 	opcode := 0x20 | (cc << 3)
 	return []uint8{opcode, uint8(disp)}, nil
@@ -923,7 +924,7 @@ func encodeBITbr(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 	if bit > 7 {
 		return nil, fmt.Errorf("bit number must be 0-7")
 	}
-	
+
 	reg := register8Map[operands[1].Register]
 	cbOpcode := 0x40 | (bit << 3) | reg
 	return []uint8{0xCB, cbOpcode}, nil
@@ -935,7 +936,7 @@ func encodeRESbr(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 	if bit > 7 {
 		return nil, fmt.Errorf("bit number must be 0-7")
 	}
-	
+
 	reg := register8Map[operands[1].Register]
 	cbOpcode := 0x80 | (bit << 3) | reg
 	return []uint8{0xCB, cbOpcode}, nil
@@ -983,30 +984,50 @@ func encodeSETbr(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 	if bit > 7 {
 		return nil, fmt.Errorf("bit number must be 0-7")
 	}
-	
+
 	reg := register8Map[operands[1].Register]
 	cbOpcode := 0xC0 | (bit << 3) | reg
 	return []uint8{0xCB, cbOpcode}, nil
 }
 
-// encodeCBHL encodes CB-prefixed rotate/shift on (HL): 0xCB, base|6
+// encodeCBHL encodes CB-prefixed rotate/shift on (HL)/(IX+d)/(IY+d): (HL) is
+// 0xCB, base|6; the indexed forms are DD/FD, 0xCB, displacement, base|6 --
+// the same opcode byte as the (HL) form, with the index prefix and
+// displacement inserted before it. zen80 already executes this DDCB/FDCB
+// group; zenas previously had no encoding for it at all (confirmed: no
+// DDCB/FDCB handling anywhere in this file before this fix), forcing an
+// LD-preserves-flags workaround at every call site that needed it.
 func encodeCBHL(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	if operands[0].Register != "HL" {
-		return nil, fmt.Errorf("expected (HL)")
+	ind := operands[0]
+	switch ind.Register {
+	case "HL":
+		return []uint8{0xCB, template.BaseOpcode | 6}, nil
+	case "IX", "IY":
+		return []uint8{indexPrefix(ind.Register), 0xCB, byte(int8(ind.Displacement)), template.BaseOpcode | 6}, nil
 	}
-	return []uint8{0xCB, template.BaseOpcode | 6}, nil
+	return nil, fmt.Errorf("expected (HL), (IX+d), or (IY+d)")
 }
 
-// encodeCBbHL encodes CB-prefixed BIT/RES/SET n,(HL): 0xCB, base|(bit<<3)|6
+// encodeCBbHL encodes CB-prefixed BIT/RES/SET n,(HL)/(IX+d)/(IY+d): (HL) is
+// 0xCB, base|(bit<<3)|6; the indexed forms are DD/FD, 0xCB, displacement,
+// base|(bit<<3)|6 -- the same opcode byte as the (HL) form, with the index
+// prefix and displacement inserted before it. This is exactly the group a
+// real zenpoint call site needed (flag-preserving BIT/SET/RES on (IY+d)),
+// previously entirely unencodable, forcing a byte- and cycle-costly
+// LD-preserves-flags workaround at all 21 sites that needed it.
 func encodeCBbHL(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
 	bit := uint8(operands[0].Value)
 	if bit > 7 {
 		return nil, fmt.Errorf("bit number must be 0-7")
 	}
-	if operands[1].Register != "HL" {
-		return nil, fmt.Errorf("expected (HL)")
+	ind := operands[1]
+	switch ind.Register {
+	case "HL":
+		return []uint8{0xCB, template.BaseOpcode | (bit << 3) | 6}, nil
+	case "IX", "IY":
+		return []uint8{indexPrefix(ind.Register), 0xCB, byte(int8(ind.Displacement)), template.BaseOpcode | (bit << 3) | 6}, nil
 	}
-	return []uint8{0xCB, template.BaseOpcode | (bit << 3) | 6}, nil
+	return nil, fmt.Errorf("expected (HL), (IX+d), or (IY+d)")
 }
 
 // encodeADC16 encodes ADC HL,rp (ED-prefixed): 0xED, 0x4A|(p<<4)
@@ -1098,6 +1119,7 @@ func (e *Encoder) GetAllInstructions() []string {
 	}
 	return mnemonics
 }
+
 // ---------------------------------------------------------------------------
 // Z80N (ZX Spectrum Next) encoders. All opcodes verified against the official
 // SpecNext reference (docs/Z80N_REFERENCE.md). Every form is ED-prefixed.

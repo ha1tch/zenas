@@ -4,6 +4,45 @@ All notable changes to zenas are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-09-02
+
+### Added
+
+- **The DDCB/FDCB instruction group**: `RLC`/`RRC`/`RL`/`RR`/`SLA`/
+  `SRA`/`SRL` and `BIT`/`RES`/`SET n` on `(IX+d)`/`(IY+d)`, previously
+  entirely unencodable -- confirmed no DDCB/FDCB handling existed
+  anywhere in the encoder before this. zen80 already executes this
+  group correctly; zenas simply had no way to assemble it, forcing a
+  byte- and cycle-costly `LD`-preserves-flags workaround at every call
+  site that needed flag-preserving bit access on an indexed operand
+  (reported by the zenpoint project: 21 such sites). The opcode byte
+  is identical to the existing `(HL)` form's own; only the index
+  prefix and displacement byte are inserted before it, so the fix
+  extends `encodeCBHL`/`encodeCBbHL` directly rather than duplicating
+  them. The undocumented copy-to-register forms (e.g. `RLC (IX+d),B`)
+  and `SLL`/`SLS` (undocumented, and not supported for `(HL)` either)
+  are still not implemented -- out of scope for this fix, not silently
+  dropped.
+
+### Fixed
+
+- **A real hex-literal parsing bug, reported by the zenpoint project**:
+  a traditional-notation hex literal whose first significant digit is
+  itself a letter -- `0BCH`, `0FFh`, `0DEADh` (the leading `0` exists
+  specifically so it doesn't read as an identifier) -- was misread as
+  a broken `0b`-prefixed binary literal, or split into a stray `0d`
+  radix-marker token plus a leftover identifier. Three separate call
+  sites shared the same root flaw (checking "does this start with
+  0b/0d?" without ever checking "does it end in H?"): the lexer's own
+  token dispatch, a second, independent bug in the exported
+  `ParseNumber`, and the spaced-hexdump `0d` radix marker (`.DB 0d 222
+  173`), the last found and fixed while verifying the first two, not
+  in the original report. All three fixed with the same disambiguation
+  (a hex-digit run terminated by `H`/`h` is a hex literal, not a radix
+  marker or binary prefix); genuine `0b`-binary literals and the
+  legitimate spaced-hexdump forms are unaffected -- verified directly,
+  not just re-running the existing suite.
+
 ## [0.8.1] - 2026-08-27
 
 ### Added

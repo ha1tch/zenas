@@ -13,36 +13,36 @@ type TokenType int
 const (
 	// End of input
 	TokenEOF TokenType = iota
-	
+
 	// Literals
-	TokenIdentifier  // Labels, mnemonics, registers
-	TokenNumber      // Numeric literals
-	TokenString      // String literals
-	
+	TokenIdentifier // Labels, mnemonics, registers
+	TokenNumber     // Numeric literals
+	TokenString     // String literals
+
 	// Operators and punctuation
-	TokenComma       // ,
-	TokenColon       // :
-	TokenPlus        // +
-	TokenMinus       // -
-	TokenStar        // *
-	TokenSlash       // /
-	TokenLParen      // (
-	TokenRParen      // )
-	TokenLBracket    // [
-	TokenRBracket    // ]
-	
+	TokenComma    // ,
+	TokenColon    // :
+	TokenPlus     // +
+	TokenMinus    // -
+	TokenStar     // *
+	TokenSlash    // /
+	TokenLParen   // (
+	TokenRParen   // )
+	TokenLBracket // [
+	TokenRBracket // ]
+
 	// Macro-specific tokens (ADDED)
-	TokenLBrace      // {
-	TokenRBrace      // }
-	TokenSemicolon   // ;
-	TokenArrow       // ->
-	TokenEquals      // =
-	
+	TokenLBrace    // {
+	TokenRBrace    // }
+	TokenSemicolon // ;
+	TokenArrow     // ->
+	TokenEquals    // =
+
 	// Special
-	TokenNewline     // \n
-	TokenComment     // ; comment
-	TokenDirective   // .directive
-	
+	TokenNewline   // \n
+	TokenComment   // ; comment
+	TokenDirective // .directive
+
 	// Error token
 	TokenError
 )
@@ -113,9 +113,9 @@ func (l *Lexer) Tokenize(source string) ([]Token, error) {
 	l.errors = []string{}
 	l.braceDepth = 0
 	l.dialect = DialectNative
-	
+
 	var tokens []Token
-	
+
 	for l.position < len(l.input) {
 		token := l.nextToken()
 		if token.Type == TokenError {
@@ -129,11 +129,11 @@ func (l *Lexer) Tokenize(source string) ([]Token, error) {
 			break
 		}
 	}
-	
+
 	if len(l.errors) > 0 {
 		return nil, fmt.Errorf("lexical errors:\n%s", strings.Join(l.errors, "\n"))
 	}
-	
+
 	// Add final EOF token
 	tokens = append(tokens, Token{
 		Type:     TokenEOF,
@@ -141,23 +141,23 @@ func (l *Lexer) Tokenize(source string) ([]Token, error) {
 		Column:   l.column,
 		Position: l.position,
 	})
-	
+
 	return tokens, nil
 }
 
 // nextToken scans and returns the next token
 func (l *Lexer) nextToken() Token {
 	l.skipWhitespace()
-	
+
 	if l.position >= len(l.input) {
 		return Token{Type: TokenEOF, Line: l.line, Column: l.column, Position: l.position}
 	}
-	
+
 	ch := l.current()
 	startLine := l.line
 	startColumn := l.column
 	startPosition := l.position
-	
+
 	switch ch {
 	case '\n':
 		l.advance()
@@ -168,7 +168,7 @@ func (l *Lexer) nextToken() Token {
 			Column:   startColumn,
 			Position: startPosition,
 		}
-		
+
 	case ',':
 		l.advance()
 		return Token{
@@ -178,7 +178,7 @@ func (l *Lexer) nextToken() Token {
 			Column:   startColumn,
 			Position: startPosition,
 		}
-		
+
 	case ':':
 		l.advance()
 		return Token{
@@ -188,7 +188,7 @@ func (l *Lexer) nextToken() Token {
 			Column:   startColumn,
 			Position: startPosition,
 		}
-		
+
 	case '+':
 		l.advance()
 		return Token{
@@ -198,7 +198,7 @@ func (l *Lexer) nextToken() Token {
 			Column:   startColumn,
 			Position: startPosition,
 		}
-		
+
 	case '-':
 		l.advance()
 		return Token{
@@ -208,7 +208,7 @@ func (l *Lexer) nextToken() Token {
 			Column:   startColumn,
 			Position: startPosition,
 		}
-		
+
 	case '*':
 		l.advance()
 		return Token{
@@ -218,7 +218,7 @@ func (l *Lexer) nextToken() Token {
 			Column:   startColumn,
 			Position: startPosition,
 		}
-		
+
 	case '/':
 		// Check for C-style comment //
 		if l.peek() == '/' {
@@ -233,7 +233,7 @@ func (l *Lexer) nextToken() Token {
 				Position: startPosition,
 			}
 		}
-		
+
 	case '(':
 		l.advance()
 		return Token{
@@ -243,7 +243,7 @@ func (l *Lexer) nextToken() Token {
 			Column:   startColumn,
 			Position: startPosition,
 		}
-		
+
 	case ')':
 		l.advance()
 		return Token{
@@ -253,7 +253,7 @@ func (l *Lexer) nextToken() Token {
 			Column:   startColumn,
 			Position: startPosition,
 		}
-		
+
 	case '[':
 		l.advance()
 		return Token{
@@ -263,7 +263,7 @@ func (l *Lexer) nextToken() Token {
 			Column:   startColumn,
 			Position: startPosition,
 		}
-		
+
 	case ']':
 		l.advance()
 		return Token{
@@ -273,8 +273,8 @@ func (l *Lexer) nextToken() Token {
 			Column:   startColumn,
 			Position: startPosition,
 		}
-		
-	case '{':  // NEW for macros
+
+	case '{': // NEW for macros
 		l.advance()
 		l.braceDepth++
 		return Token{
@@ -284,8 +284,8 @@ func (l *Lexer) nextToken() Token {
 			Column:   startColumn,
 			Position: startPosition,
 		}
-		
-	case '}':  // NEW for macros
+
+	case '}': // NEW for macros
 		l.advance()
 		if l.braceDepth > 0 {
 			l.braceDepth--
@@ -297,8 +297,8 @@ func (l *Lexer) nextToken() Token {
 			Column:   startColumn,
 			Position: startPosition,
 		}
-		
-	case '=':  // NEW for C-style assignments
+
+	case '=': // NEW for C-style assignments
 		l.advance()
 		return Token{
 			Type:     TokenEquals,
@@ -307,7 +307,7 @@ func (l *Lexer) nextToken() Token {
 			Column:   startColumn,
 			Position: startPosition,
 		}
-		
+
 	case ';':
 		// In traditional Z80 assembly a semicolon begins a comment to end of
 		// line. In C-style mode it is a statement terminator instead, so that
@@ -324,13 +324,13 @@ func (l *Lexer) nextToken() Token {
 			}
 		}
 		return l.scanComment(startLine, startColumn, startPosition)
-		
+
 	case '.':
 		return l.scanDirective(startLine, startColumn, startPosition)
-		
+
 	case '"', '\'':
 		return l.scanString(ch, startLine, startColumn, startPosition)
-		
+
 	case '0':
 		// Check for 0x (hex) or 0b (binary) prefixes
 		if l.peek() == 'x' || l.peek() == 'X' {
@@ -343,18 +343,25 @@ func (l *Lexer) nextToken() Token {
 				return Token{Type: TokenIdentifier, Value: "0x", Line: startLine, Column: startColumn, Position: startPosition}
 			}
 			return l.scanHexNumber0x(startLine, startColumn, startPosition)
-		} else if (l.peek() == 'd' || l.peek() == 'D') && !isDecimalDigitRune(l.peekAt(2)) {
+		} else if (l.peek() == 'd' || l.peek() == 'D') && !isDecimalDigitRune(l.peekAt(2)) && !l.looksLikeHexHSuffix() {
 			// "0d" radix marker (decimal hexdump form, e.g. .DB 0d 222 173).
+			// The H-suffix exclusion matters here too, the same reason it
+			// does for the 0b case just below: 0DEADh is a hex literal
+			// whose first digit is itself a letter, not a radix marker
+			// followed by an identifier -- without it, this split into
+			// the "0d" token plus a stray "EADh" identifier.
 			l.advance() // '0'
 			l.advance() // 'd'
 			return Token{Type: TokenIdentifier, Value: "0d", Line: startLine, Column: startColumn, Position: startPosition}
-		} else if l.peek() == 'b' || l.peek() == 'B' {
+		} else if (l.peek() == 'b' || l.peek() == 'B') && !l.looksLikeHexHSuffix() {
 			return l.scanBinaryNumber0b(startLine, startColumn, startPosition)
 		} else {
-			// Regular number starting with 0
+			// Regular number starting with 0 -- also the traditional
+			// assembler hex-with-H-suffix case (0BCH, 0FFh) that would
+			// otherwise be misread as a broken 0b-binary literal.
 			return l.scanNumber(startLine, startColumn, startPosition)
 		}
-		
+
 	case '$':
 		// In pasmo dialect, a '$' that is not immediately followed by a hex
 		// digit is the location counter (current address). A '$' followed by a
@@ -371,7 +378,7 @@ func (l *Lexer) nextToken() Token {
 			}
 		}
 		return l.scanHexNumber(startLine, startColumn, startPosition)
-		
+
 	case '&':
 		return l.scanHexNumberAmp(startLine, startColumn, startPosition)
 
@@ -390,10 +397,10 @@ func (l *Lexer) nextToken() Token {
 			Column:   startColumn,
 			Position: startPosition,
 		}
-		
+
 	case '%':
 		return l.scanBinaryNumber(startLine, startColumn, startPosition)
-		
+
 	default:
 		if unicode.IsDigit(ch) {
 			return l.scanNumber(startLine, startColumn, startPosition)
@@ -417,6 +424,26 @@ func (l *Lexer) nextToken() Token {
 // isHexDigit reports whether r is a hexadecimal digit.
 func isHexDigit(r rune) bool {
 	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+}
+
+// looksLikeHexHSuffix reports whether, starting right after the leading
+// '0' the caller just saw, a run of hex digits is immediately followed
+// by an H/h suffix -- the traditional assembler notation for a hex
+// value whose first significant digit is itself a letter (0BCH, 0FFh),
+// disambiguated here from a genuine 0b-prefixed binary literal, which
+// this same leading "0B"/"0b" would otherwise always be read as
+// (confirmed: scanBinaryNumber0b only accepts 0/1 digits, so 0BCH hit
+// its "missing digits after 0b" error path -- C is neither).
+func (l *Lexer) looksLikeHexHSuffix() bool {
+	n := 1
+	for {
+		ch := l.peekAt(n)
+		if isHexDigit(ch) {
+			n++
+			continue
+		}
+		return ch == 'H' || ch == 'h'
+	}
 }
 
 func (l *Lexer) current() rune {
@@ -474,7 +501,7 @@ func (l *Lexer) scanComment(startLine, startColumn, startPosition int) Token {
 		value += string(l.current())
 		l.advance()
 	}
-	
+
 	return Token{
 		Type:     TokenComment,
 		Value:    value,
@@ -488,13 +515,13 @@ func (l *Lexer) scanCStyleComment(startLine, startColumn, startPosition int) Tok
 	value := "//"
 	l.advance() // Skip first '/'
 	l.advance() // Skip second '/'
-	
+
 	// Read the rest of the line
 	for l.position < len(l.input) && l.current() != '\n' {
 		value += string(l.current())
 		l.advance()
 	}
-	
+
 	return Token{
 		Type:     TokenComment,
 		Value:    value,
@@ -507,7 +534,7 @@ func (l *Lexer) scanCStyleComment(startLine, startColumn, startPosition int) Tok
 func (l *Lexer) scanDirective(startLine, startColumn, startPosition int) Token {
 	value := ""
 	l.advance() // Skip '.'
-	
+
 	for l.position < len(l.input) {
 		ch := l.current()
 		if unicode.IsLetter(ch) || unicode.IsDigit(ch) || ch == '_' {
@@ -517,7 +544,7 @@ func (l *Lexer) scanDirective(startLine, startColumn, startPosition int) Token {
 			break
 		}
 	}
-	
+
 	directiveName := "." + strings.ToUpper(value)
 
 	// Dialect switches take effect immediately as they are lexed, so subsequent
@@ -542,7 +569,7 @@ func (l *Lexer) scanDirective(startLine, startColumn, startPosition int) Token {
 func (l *Lexer) scanString(quote rune, startLine, startColumn, startPosition int) Token {
 	value := ""
 	l.advance() // Skip opening quote
-	
+
 	for l.position < len(l.input) {
 		ch := l.current()
 		if ch == quote {
@@ -581,7 +608,7 @@ func (l *Lexer) scanString(quote rune, startLine, startColumn, startPosition int
 			l.advance()
 		}
 	}
-	
+
 	return Token{
 		Type:     TokenString,
 		Value:    value,
@@ -593,7 +620,7 @@ func (l *Lexer) scanString(quote rune, startLine, startColumn, startPosition int
 
 func (l *Lexer) scanNumber(startLine, startColumn, startPosition int) Token {
 	value := ""
-	
+
 	// Scan digits and letters for hex/binary suffixes
 	for l.position < len(l.input) {
 		ch := l.current()
@@ -604,7 +631,7 @@ func (l *Lexer) scanNumber(startLine, startColumn, startPosition int) Token {
 			break
 		}
 	}
-	
+
 	// Check for hex suffix (like 1234H) or binary suffix (like 101010B)
 	if l.position < len(l.input) {
 		ch := l.current()
@@ -613,7 +640,7 @@ func (l *Lexer) scanNumber(startLine, startColumn, startPosition int) Token {
 			l.advance()
 		}
 	}
-	
+
 	return Token{
 		Type:     TokenNumber,
 		Value:    value,
@@ -627,7 +654,7 @@ func (l *Lexer) scanHexNumber0x(startLine, startColumn, startPosition int) Token
 	value := "0x"
 	l.advance() // Skip '0'
 	l.advance() // Skip 'x' or 'X'
-	
+
 	digitCount := 0
 	for l.position < len(l.input) {
 		ch := l.current()
@@ -642,7 +669,7 @@ func (l *Lexer) scanHexNumber0x(startLine, startColumn, startPosition int) Token
 			break
 		}
 	}
-	
+
 	if digitCount == 0 {
 		return Token{
 			Type:     TokenError,
@@ -652,7 +679,7 @@ func (l *Lexer) scanHexNumber0x(startLine, startColumn, startPosition int) Token
 			Position: startPosition,
 		}
 	}
-	
+
 	return Token{
 		Type:     TokenNumber,
 		Value:    value,
@@ -666,7 +693,7 @@ func (l *Lexer) scanBinaryNumber0b(startLine, startColumn, startPosition int) To
 	value := "0b"
 	l.advance() // Skip '0'
 	l.advance() // Skip 'b' or 'B'
-	
+
 	digitCount := 0
 	for l.position < len(l.input) {
 		ch := l.current()
@@ -681,7 +708,7 @@ func (l *Lexer) scanBinaryNumber0b(startLine, startColumn, startPosition int) To
 			break
 		}
 	}
-	
+
 	if digitCount == 0 {
 		return Token{
 			Type:     TokenError,
@@ -691,7 +718,7 @@ func (l *Lexer) scanBinaryNumber0b(startLine, startColumn, startPosition int) To
 			Position: startPosition,
 		}
 	}
-	
+
 	return Token{
 		Type:     TokenNumber,
 		Value:    value,
@@ -704,7 +731,7 @@ func (l *Lexer) scanBinaryNumber0b(startLine, startColumn, startPosition int) To
 func (l *Lexer) scanHexNumber(startLine, startColumn, startPosition int) Token {
 	value := "$"
 	l.advance() // Skip '$'
-	
+
 	digitCount := 0
 	for l.position < len(l.input) {
 		ch := l.current()
@@ -716,7 +743,7 @@ func (l *Lexer) scanHexNumber(startLine, startColumn, startPosition int) Token {
 			break
 		}
 	}
-	
+
 	if digitCount == 0 {
 		return Token{
 			Type:     TokenError,
@@ -726,7 +753,7 @@ func (l *Lexer) scanHexNumber(startLine, startColumn, startPosition int) Token {
 			Position: startPosition,
 		}
 	}
-	
+
 	return Token{
 		Type:     TokenNumber,
 		Value:    value,
@@ -739,7 +766,7 @@ func (l *Lexer) scanHexNumber(startLine, startColumn, startPosition int) Token {
 func (l *Lexer) scanBinaryNumber(startLine, startColumn, startPosition int) Token {
 	value := "%"
 	l.advance() // Skip '%'
-	
+
 	digitCount := 0
 	for l.position < len(l.input) {
 		ch := l.current()
@@ -751,7 +778,7 @@ func (l *Lexer) scanBinaryNumber(startLine, startColumn, startPosition int) Toke
 			break
 		}
 	}
-	
+
 	if digitCount == 0 {
 		return Token{
 			Type:     TokenError,
@@ -761,7 +788,7 @@ func (l *Lexer) scanBinaryNumber(startLine, startColumn, startPosition int) Toke
 			Position: startPosition,
 		}
 	}
-	
+
 	return Token{
 		Type:     TokenNumber,
 		Value:    value,
@@ -774,7 +801,7 @@ func (l *Lexer) scanBinaryNumber(startLine, startColumn, startPosition int) Toke
 func (l *Lexer) scanHexNumberAmp(startLine, startColumn, startPosition int) Token {
 	value := "&"
 	l.advance() // Skip '&'
-	
+
 	digitCount := 0
 	for l.position < len(l.input) {
 		ch := l.current()
@@ -786,7 +813,7 @@ func (l *Lexer) scanHexNumberAmp(startLine, startColumn, startPosition int) Toke
 			break
 		}
 	}
-	
+
 	if digitCount == 0 {
 		return Token{
 			Type:     TokenError,
@@ -796,7 +823,7 @@ func (l *Lexer) scanHexNumberAmp(startLine, startColumn, startPosition int) Toke
 			Position: startPosition,
 		}
 	}
-	
+
 	return Token{
 		Type:     TokenNumber,
 		Value:    value,
@@ -843,7 +870,7 @@ func (l *Lexer) scanHexNumberHash(startLine, startColumn, startPosition int) Tok
 
 func (l *Lexer) scanIdentifier(startLine, startColumn, startPosition int) Token {
 	value := ""
-	
+
 	for l.position < len(l.input) {
 		ch := l.current()
 		if unicode.IsLetter(ch) || unicode.IsDigit(ch) || ch == '_' || ch == '.' ||
@@ -869,7 +896,7 @@ func (l *Lexer) scanIdentifier(startLine, startColumn, startPosition int) Token 
 			l.advance()
 		}
 	}
-	
+
 	return Token{
 		Type:     TokenIdentifier,
 		Value:    value,
@@ -884,15 +911,15 @@ func ParseNumber(token Token) (int, error) {
 	if token.Type != TokenNumber {
 		return 0, fmt.Errorf("not a number token")
 	}
-	
+
 	value := token.Value
-	
+
 	if strings.HasPrefix(value, "$") {
 		// Hexadecimal
 		val, err := strconv.ParseInt(value[1:], 16, 32)
 		return int(val), err
 	} else if strings.HasPrefix(value, "&") {
-		// Hexadecimal with & prefix  
+		// Hexadecimal with & prefix
 		val, err := strconv.ParseInt(value[1:], 16, 32)
 		return int(val), err
 	} else if strings.HasPrefix(value, "#") {
@@ -908,8 +935,14 @@ func ParseNumber(token Token) (int, error) {
 		cleanValue := strings.ReplaceAll(value[2:], "_", "")
 		val, err := strconv.ParseInt(cleanValue, 16, 32)
 		return int(val), err
-	} else if strings.HasPrefix(strings.ToLower(value), "0b") {
-		// Binary with 0b prefix (remove underscores first)
+	} else if strings.HasPrefix(strings.ToLower(value), "0b") && !strings.HasSuffix(strings.ToUpper(value), "H") {
+		// Binary with 0b prefix (remove underscores first). The H-suffix
+		// exclusion matters: a traditional assembler hex literal whose
+		// first significant digit is itself a letter (0BCH, 0FFh) also
+		// starts with "0b"/"0B" -- without this check, value[2:] strips
+		// the leading "0B" and leaves "CH", not valid in any radix, the
+		// same bug the lexer's own dispatch (scanNumber vs
+		// scanBinaryNumber0b) had and was fixed for above.
 		cleanValue := strings.ReplaceAll(value[2:], "_", "")
 		val, err := strconv.ParseInt(cleanValue, 2, 32)
 		return int(val), err
@@ -1008,7 +1041,7 @@ func (el *ExtendedLexer) TokenizeWithMacroSupport(source string) ([]Token, error
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Post-process tokens to add macro-specific token types
 	return el.postProcessMacroTokens(tokens), nil
 }
@@ -1031,36 +1064,36 @@ func (el *ExtendedLexer) isMacroKeyword(value string) bool {
 		// Traditional macro keywords
 		"MACRO":    true,
 		"ENDMACRO": true,
-		
+
 		// C-style keywords
-		"void":        true,
-		"uint8_t":     true,
-		"uint16_t":    true,
-		"uint8":       true,
-		"uint16":      true,
-		"byte":        true,
-		"word":        true,
-		"register8_t": true,
+		"void":         true,
+		"uint8_t":      true,
+		"uint16_t":     true,
+		"uint8":        true,
+		"uint16":       true,
+		"byte":         true,
+		"word":         true,
+		"register8_t":  true,
 		"register16_t": true,
-		"reg8":        true,
-		"reg16":       true,
-		"address_t":   true,
-		"addr":        true,
-		"return":      true,
+		"reg8":         true,
+		"reg16":        true,
+		"address_t":    true,
+		"addr":         true,
+		"return":       true,
 	}
-	
+
 	return keywords[strings.ToUpper(value)]
 }
 
 // ValidateBraceMatching validates that braces are properly matched in macro definitions
 func (el *ExtendedLexer) ValidateBraceMatching(tokens []Token) error {
 	var braceStack []Token
-	
+
 	for _, token := range tokens {
 		switch token.Type {
 		case TokenLBrace:
 			braceStack = append(braceStack, token)
-			
+
 		case TokenRBrace:
 			if len(braceStack) == 0 {
 				return fmt.Errorf("unmatched closing brace at line %d:%d", token.Line, token.Column)
@@ -1069,11 +1102,11 @@ func (el *ExtendedLexer) ValidateBraceMatching(tokens []Token) error {
 			braceStack = braceStack[:len(braceStack)-1]
 		}
 	}
-	
+
 	if len(braceStack) > 0 {
 		unmatched := braceStack[0]
 		return fmt.Errorf("unmatched opening brace at line %d:%d", unmatched.Line, unmatched.Column)
 	}
-	
+
 	return nil
 }
