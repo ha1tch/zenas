@@ -52,10 +52,22 @@ out += ["LD A,I","LD A,R","LD I,A","LD R,A"]
 # IX/IY family
 for ix in ["IX","IY"]:
     out += [f"LD {ix},$1234", f"PUSH {ix}", f"POP {ix}", f"ADD {ix},BC", f"ADD {ix},DE", f"ADD {ix},SP",
-            f"INC {ix}", f"DEC {ix}", f"LD SP,{ix}", f"JP ({ix})"]
+            f"INC {ix}", f"DEC {ix}", f"LD SP,{ix}", f"JP ({ix})",
+            # LD IX,(nn)/LD (nn),IX and EX (SP),IX were entirely missing
+            # from this generator until the clock-count review found
+            # zenas itself had no encoding for them at all -- added
+            # here so this generator's own pasmo cross-check would
+            # catch a regression, not just the hand-written unit tests.
+            f"LD {ix},($1234)", f"LD ($1234),{ix}", f"EX (SP),{ix}"]
     for s in regs8:
         out += [f"LD {s},({ix}+2)", f"LD ({ix}+2),{s}"]
-    out += [f"LD ({ix}+2),5", f"ADD A,({ix}+2)", f"INC ({ix}+2)", f"DEC ({ix}+2)", f"CP ({ix}+2)"]
+    out += [f"LD ({ix}+2),5", f"INC ({ix}+2)", f"DEC ({ix}+2)"]
+    # Full ALU-on-indexed family: previously only ADD A,(ix+2) and
+    # CP (ix+2) were exercised here, leaving ADC/SBC/SUB/AND/XOR/OR
+    # covered only by a one-off manual check during the same review,
+    # not by this generator's own repeatable pasmo cross-check.
+    for op in ["ADD A,","ADC A,","SBC A,","SUB ","AND ","XOR ","OR ","CP "]:
+        out.append(f"{op}({ix}+2)")
 # Undocumented IX/IY half registers (IXH/IXL/IYH/IYL). The completeness checker
 # skips any line the reference assembler rejects, so only the legal forms below
 # are compared; illegal mixes (LD IXH,IYL, LD (IX+d),IXH) are covered by the

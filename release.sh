@@ -2,6 +2,9 @@
 # release.sh - zenas release hygiene automation
 #
 # Single-pass release preparation:
+#   0. Badcode scan (mandatory pre-flight when repoman is on PATH;
+#      see ha1tch.github.io/gorepoman/docs/repoman-065-badcode.html
+#      for the forbidden-string gate this runs)
 #   1. Validates version string and CHANGELOG entry
 #   2. Syncs VERSION + pkg/version/version.go
 #   3. Builds the project
@@ -40,6 +43,20 @@ step() { echo ""; echo "-- $1"; }
 ok()   { echo "   OK $1"; }
 warn() { echo "   !! $1"; }
 fail() { echo "   FAIL $1" >&2; exit 1; }
+
+# 0. Badcode scan -- runs first, unconditionally, matching gorepoman's
+#    own relcore convention (before version validation, before
+#    anything else). Soft-skips with a warning if repoman itself is
+#    not on PATH, rather than either silently skipping (a check that
+#    never ran must not look identical to a check that ran clean) or
+#    hard-failing the release over an optional tool.
+step "Badcode scan"
+if command -v repoman >/dev/null 2>&1; then
+    repoman badcode check . || fail "badcode check failed -- see match details above"
+    ok "badcode check passed"
+else
+    warn "repoman not found on PATH -- badcode scan skipped, not run clean"
+fi
 
 # 1. Validate version format
 step "Version: $VERSION"
@@ -93,7 +110,7 @@ if $CUT_ZIP; then
     rm -f "$ZIP"
     # ship source + project files; exclude build artefacts, VCS, attic, and OS cruft
     zip -rq "$ZIP" . \
-        -x '.git/*' -x 'build/*' -x 'attic/*' \
+        -x '.git/*' -x 'build/*' -x 'attic/*' -x 'repoman/*' \
         -x '*.DS_Store' -x 'zenas-v*.zip' -x "$ZIP"
     ok "wrote $ZIP ($(wc -c < "$ZIP") bytes)"
 else

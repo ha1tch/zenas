@@ -94,7 +94,7 @@ const (
 	ExpressionSymbol
 	ExpressionBinary
 	ExpressionUnary
-	ExpressionString  // String literal for character mapping
+	ExpressionString // String literal for character mapping
 )
 
 // Expression represents a mathematical expression
@@ -102,12 +102,12 @@ type Expression struct {
 	Type        ExpressionType
 	Value       int
 	Symbol      string
-	StringValue string       // For string literals
+	StringValue string // For string literals
 	Operator    string
 	Left        *Expression
 	Right       *Expression
-	RawDigits   string // original digit string of a 0x/0d literal, for multi-byte hexdump chopping in data directives
-	RawRadix    int    // 16 or 10 when RawDigits or RadixGroups is set
+	RawDigits   string   // original digit string of a 0x/0d literal, for multi-byte hexdump chopping in data directives
+	RawRadix    int      // 16 or 10 when RawDigits or RadixGroups is set
 	RadixGroups []string // spaced 0x/0d hexdump groups (e.g. ["DE","AD"]) for data directives
 }
 
@@ -118,14 +118,19 @@ var (
 		"E": true, "H": true, "L": true,
 		"IXH": true, "IXL": true, "IYH": true, "IYL": true,
 		"I": true, "R": true,
+		// F is valid only for IN F,(C) (an alias for IN (C), same
+		// opcode), not as a general 8-bit register operand -- the
+		// encoder rejects every other use, the same way it already
+		// does for I/R outside their own special-cased LD forms.
+		"F": true,
 	}
-	
+
 	register16Set = map[string]bool{
 		"BC": true, "DE": true, "HL": true, "SP": true,
 		"IX": true, "IY": true, "AF": true,
 		"AF'": true,
 	}
-	
+
 	conditionSet = map[string]bool{
 		"NZ": true, "Z": true, "NC": true, "C": true,
 		"PO": true, "PE": true, "P": true, "M": true,
@@ -155,15 +160,15 @@ func (p *Parser) Parse(tokens []Token) (*ParsedProgram, error) {
 	p.tokens = tokens
 	p.position = 0
 	p.errors = []string{}
-	
+
 	if len(tokens) > 0 {
 		p.current = tokens[0]
 	}
-	
+
 	program := &ParsedProgram{
 		Lines: []ParsedLine{},
 	}
-	
+
 	for p.current.Type != TokenEOF {
 		line, err := p.parseLine()
 		if err != nil {
@@ -171,16 +176,16 @@ func (p *Parser) Parse(tokens []Token) (*ParsedProgram, error) {
 			p.skipToNextLine()
 			continue
 		}
-		
+
 		if line != nil {
 			program.Lines = append(program.Lines, *line)
 		}
 	}
-	
+
 	if len(p.errors) > 0 {
 		return program, fmt.Errorf("parse errors:\n%s", strings.Join(p.errors, "\n"))
 	}
-	
+
 	return program, nil
 }
 
@@ -188,13 +193,13 @@ func (p *Parser) Parse(tokens []Token) (*ParsedProgram, error) {
 func (p *Parser) parseLine() (*ParsedLine, error) {
 	lineNumber := p.current.Line
 	line := &ParsedLine{LineNumber: lineNumber}
-	
+
 	// Skip empty lines
 	if p.current.Type == TokenNewline {
 		p.advance()
 		return nil, nil
 	}
-	
+
 	// Handle comments at start of line
 	if p.current.Type == TokenComment {
 		line.Comment = p.current.Value
@@ -202,7 +207,7 @@ func (p *Parser) parseLine() (*ParsedLine, error) {
 		p.skipNewlines()
 		return line, nil
 	}
-	
+
 	// Track dialect as we walk the stream: .PASMO / .ZENAS flip the mode so the
 	// no-colon-label rule below applies only inside pasmo regions.
 	if p.current.Type == TokenDirective {
@@ -213,7 +218,7 @@ func (p *Parser) parseLine() (*ParsedLine, error) {
 			p.inPasmo = false
 		}
 	}
-	
+
 	// Check for label
 	if p.current.Type == TokenIdentifier && p.peek().Type == TokenColon {
 		line.Label = p.current.Value
@@ -235,7 +240,7 @@ func (p *Parser) parseLine() (*ParsedLine, error) {
 		line.Label = p.current.Value
 		p.advance() // Skip label identifier
 	}
-	
+
 	// Check for directive
 	if p.current.Type == TokenDirective {
 		directive, err := p.parseDirective()
@@ -260,20 +265,20 @@ func (p *Parser) parseLine() (*ParsedLine, error) {
 			line.Instruction = instruction
 		}
 	}
-	
+
 	// Handle end-of-line comment
 	if p.current.Type == TokenComment {
 		line.Comment = p.current.Value
 		p.advance()
 	}
-	
+
 	// Expect newline or EOF
 	if p.current.Type == TokenNewline {
 		p.advance()
 	} else if p.current.Type != TokenEOF {
 		return nil, fmt.Errorf("line %d: expected newline at end of line, got %s", lineNumber, p.current.Type)
 	}
-	
+
 	return line, nil
 }
 
@@ -351,7 +356,7 @@ func (p *Parser) parseRadixMarker() (*Expression, error) {
 		return nil, fmt.Errorf("0%c marker has no values", map[int]byte{16: 'x', 10: 'd'}[radix])
 	}
 	return &Expression{
-		Type:       ExpressionNumber,
+		Type:        ExpressionNumber,
 		RadixGroups: groups,
 		RawRadix:    radix,
 	}, nil
@@ -364,9 +369,9 @@ func (p *Parser) parseDirective() (*Directive, error) {
 		Name:      directiveName,
 		Arguments: []*Expression{},
 	}
-	
+
 	p.advance() // Skip directive name
-	
+
 	// Handle .END directive specially (it can have optional argument)
 	if directiveName == ".END" {
 		if p.current.Type == TokenIdentifier {
@@ -379,7 +384,7 @@ func (p *Parser) parseDirective() (*Directive, error) {
 		}
 		return directive, nil
 	}
-	
+
 	// Handle .EXPECT specially: its arguments are an assertion DSL (A=0x0E,CF=1),
 	// not Z80 expressions, so capture the rest of the line verbatim.
 	if strings.ToUpper(directiveName) == ".EXPECT" {
@@ -391,7 +396,7 @@ func (p *Parser) parseDirective() (*Directive, error) {
 		directive.RawArgs = strings.Join(parts, "")
 		return directive, nil
 	}
-	
+
 	// Handle .MATCH specially: "location, data-directive" — capture verbatim so
 	// the data part can be re-assembled through the real data path at check time.
 	// Preserve spaces between tokens so the spaced radix form (0x DE AD) survives.
@@ -404,7 +409,7 @@ func (p *Parser) parseDirective() (*Directive, error) {
 		directive.RawArgs = strings.Join(parts, " ")
 		return directive, nil
 	}
-	
+
 	// Parse arguments for other directives
 	for p.current.Type != TokenNewline && p.current.Type != TokenEOF && p.current.Type != TokenComment {
 		if p.isRadixMarker() {
@@ -429,14 +434,14 @@ func (p *Parser) parseDirective() (*Directive, error) {
 			}
 			directive.Arguments = append(directive.Arguments, expr)
 		}
-		
+
 		if p.current.Type == TokenComma {
 			p.advance()
 		} else {
 			break
 		}
 	}
-	
+
 	return directive, nil
 }
 
@@ -480,7 +485,7 @@ func (p *Parser) parseInstruction() (*Instruction, error) {
 	}
 
 	p.advance() // Skip mnemonic
-	
+
 	// Parse operands
 	for p.current.Type != TokenNewline && p.current.Type != TokenEOF && p.current.Type != TokenComment {
 		operand, err := p.parseOperand()
@@ -488,14 +493,14 @@ func (p *Parser) parseInstruction() (*Instruction, error) {
 			return nil, err
 		}
 		instruction.Operands = append(instruction.Operands, operand)
-		
+
 		if p.current.Type == TokenComma {
 			p.advance()
 		} else {
 			break
 		}
 	}
-	
+
 	return instruction, nil
 }
 
@@ -504,13 +509,13 @@ func (p *Parser) parseOperand() (*Operand, error) {
 	switch p.current.Type {
 	case TokenIdentifier:
 		return p.parseIdentifierOperand()
-		
+
 	case TokenLParen:
 		return p.parseIndirectOperand()
-		
+
 	case TokenNumber, TokenMinus, TokenPlus:
 		return p.parseImmediateOperand()
-		
+
 	case TokenString:
 		// Handle string literals in data contexts
 		str := p.current.Value
@@ -523,7 +528,7 @@ func (p *Parser) parseOperand() (*Operand, error) {
 				Value: int(str[0]), // Just first character for now
 			},
 		}, nil
-		
+
 	default:
 		return nil, fmt.Errorf("unexpected token in operand: %s (expected identifier, number, or '(')", p.current.Type)
 	}
@@ -540,7 +545,34 @@ func (p *Parser) parseIdentifierOperand() (*Operand, error) {
 	// case (the assembler is case-sensitive for labels and constants), so the
 	// raw identifier is used only on the symbol path below.
 	upper := strings.ToUpper(identifier)
-	
+
+	// LOW/HIGH are pasmo-style unary byte-extraction operators (e.g.
+	// `CP LOW label`, `LD A,HIGH addr`). This is the operand-parsing entry
+	// point for a bare instruction argument, a different path from
+	// parsePrimaryExpression (reached from directive arguments, parens, and
+	// expression continuations) which already handles LOW/HIGH inline -- so
+	// it is reused here for the inner operand once LOW/HIGH itself is
+	// consumed, keeping one definition of what LOW/HIGH mean. Checked ahead
+	// of the register/condition tables since neither word is a register or
+	// condition name.
+	if upper == "LOW" || upper == "HIGH" {
+		operand, err := p.parsePrimaryExpression()
+		if err != nil {
+			return nil, err
+		}
+		expr := &Expression{Type: ExpressionUnary, Operator: upper, Left: operand}
+		if p.isExpressionOperator(p.current.Type) {
+			expr, err = p.parseExpressionFromLeft(expr)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return &Operand{
+			Type:       OperandImmediate16,
+			Expression: expr,
+		}, nil
+	}
+
 	// Special case: for certain instructions, some identifiers should be treated as conditions first
 	// This handles cases like "JP C, addr" where C should be condition, not register
 	if p.isConditionContext() && conditionSet[upper] {
@@ -549,7 +581,7 @@ func (p *Parser) parseIdentifierOperand() (*Operand, error) {
 			Condition: upper,
 		}, nil
 	}
-	
+
 	// Check if it's a register
 	if register8Set[upper] {
 		return &Operand{
@@ -557,14 +589,14 @@ func (p *Parser) parseIdentifierOperand() (*Operand, error) {
 			Register: upper,
 		}, nil
 	}
-	
+
 	if register16Set[upper] {
 		return &Operand{
 			Type:     OperandRegister16,
 			Register: upper,
 		}, nil
 	}
-	
+
 	// Check if it's a condition (for cases not caught above)
 	if conditionSet[upper] {
 		return &Operand{
@@ -572,7 +604,7 @@ func (p *Parser) parseIdentifierOperand() (*Operand, error) {
 			Condition: upper,
 		}, nil
 	}
-	
+
 	// Otherwise, it's a symbol reference. If an arithmetic operator follows, the
 	// operand is an expression seeded by this symbol (e.g. kernel_end+255,
 	// CELLMAP_SIZE-1, vtable+N*3). Otherwise it's a bare symbol. Symbol case is
@@ -637,10 +669,10 @@ func (p *Parser) parseExpressionFromLeft(left *Expression) (*Expression, error) 
 func (p *Parser) isConditionContext() bool {
 	// Look back to see if we're parsing operands for a conditional instruction
 	// This is a simple heuristic - in a real parser you'd track more context
-	return p.currentInstructionMnemonic() == "JP" || 
-		   p.currentInstructionMnemonic() == "JR" || 
-		   p.currentInstructionMnemonic() == "CALL" || 
-		   p.currentInstructionMnemonic() == "RET"
+	return p.currentInstructionMnemonic() == "JP" ||
+		p.currentInstructionMnemonic() == "JR" ||
+		p.currentInstructionMnemonic() == "CALL" ||
+		p.currentInstructionMnemonic() == "RET"
 }
 
 // currentInstructionMnemonic returns the mnemonic of the instruction currently being parsed
@@ -664,25 +696,25 @@ func (p *Parser) currentInstructionMnemonic() string {
 // parseIndirectOperand parses an indirect addressing operand
 func (p *Parser) parseIndirectOperand() (*Operand, error) {
 	p.advance() // Skip '('
-	
+
 	operand := &Operand{Type: OperandIndirect}
-	
+
 	if p.current.Type == TokenIdentifier {
 		identifier := p.current.Value
 		upper := strings.ToUpper(identifier)
 		p.advance()
-		
+
 		// Check for displacement (IX+d, IY+d)
 		if upper == "IX" || upper == "IY" {
 			operand.Register = upper
-			
+
 			if p.current.Type == TokenPlus || p.current.Type == TokenMinus {
 				sign := 1
 				if p.current.Type == TokenMinus {
 					sign = -1
 				}
 				p.advance()
-				
+
 				// The displacement is a compile-time constant but may reference
 				// symbols (e.g. (IX+OFFSET)), so we keep the expression and
 				// evaluate it at assembly time, where symbols are known. The
@@ -734,12 +766,12 @@ func (p *Parser) parseIndirectOperand() (*Operand, error) {
 	} else {
 		return nil, fmt.Errorf("expected register, symbol, or number in indirect operand")
 	}
-	
+
 	if p.current.Type != TokenRParen {
 		return nil, fmt.Errorf("expected ')' to close indirect operand")
 	}
 	p.advance() // Skip ')'
-	
+
 	return operand, nil
 }
 
@@ -749,7 +781,7 @@ func (p *Parser) parseImmediateOperand() (*Operand, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &Operand{
 		Type:       OperandImmediate16, // Will be determined during encoding
 		Expression: expr,
@@ -843,16 +875,16 @@ func (p *Parser) parseAddSubExpression() (*Expression, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for p.current.Type == TokenPlus || p.current.Type == TokenMinus {
 		operator := p.current.Value
 		p.advance()
-		
+
 		right, err := p.parseMulDivExpression()
 		if err != nil {
 			return nil, err
 		}
-		
+
 		left = &Expression{
 			Type:     ExpressionBinary,
 			Operator: operator,
@@ -860,7 +892,7 @@ func (p *Parser) parseAddSubExpression() (*Expression, error) {
 			Right:    right,
 		}
 	}
-	
+
 	return left, nil
 }
 
@@ -870,16 +902,16 @@ func (p *Parser) parseMulDivExpression() (*Expression, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for p.current.Type == TokenStar || p.current.Type == TokenSlash {
 		operator := p.current.Value
 		p.advance()
-		
+
 		right, err := p.parsePrimaryExpression()
 		if err != nil {
 			return nil, err
 		}
-		
+
 		left = &Expression{
 			Type:     ExpressionBinary,
 			Operator: operator,
@@ -887,7 +919,7 @@ func (p *Parser) parseMulDivExpression() (*Expression, error) {
 			Right:    right,
 		}
 	}
-	
+
 	return left, nil
 }
 
@@ -931,15 +963,29 @@ func (p *Parser) parsePrimaryExpression() (*Expression, error) {
 			Type:  ExpressionNumber,
 			Value: ch,
 		}, nil
-		
+
 	case TokenIdentifier:
+		// LOW/HIGH are pasmo-style unary byte-extraction operators (LOW x = low
+		// 8 bits of x, HIGH x = bits 8-15). Reserved as expression keywords
+		// wherever an operand is parsed, matching pasmo's own reservation of
+		// these words, not gated behind .pasmo mode: pasmo source that reaches
+		// zenas via plain INCLUDE (no explicit dialect directive) still uses
+		// them in ordinary arithmetic operand position (e.g. `CP LOW label`).
+		if upper := strings.ToUpper(p.current.Value); upper == "LOW" || upper == "HIGH" {
+			p.advance()
+			operand, err := p.parsePrimaryExpression()
+			if err != nil {
+				return nil, err
+			}
+			return &Expression{Type: ExpressionUnary, Operator: upper, Left: operand}, nil
+		}
 		symbol := p.current.Value
 		p.advance()
 		return &Expression{
 			Type:   ExpressionSymbol,
 			Symbol: symbol,
 		}, nil
-		
+
 	case TokenMinus:
 		p.advance()
 		expr, err := p.parsePrimaryExpression()
@@ -951,11 +997,11 @@ func (p *Parser) parsePrimaryExpression() (*Expression, error) {
 			Operator: "-",
 			Left:     expr,
 		}, nil
-		
+
 	case TokenPlus:
 		p.advance()
 		return p.parsePrimaryExpression()
-		
+
 	case TokenLParen:
 		p.advance() // Skip '('
 		expr, err := p.parseExpression()
@@ -967,7 +1013,7 @@ func (p *Parser) parsePrimaryExpression() (*Expression, error) {
 		}
 		p.advance() // Skip ')'
 		return expr, nil
-		
+
 	default:
 		return nil, fmt.Errorf("unexpected token in expression: %s", p.current.Type)
 	}
@@ -1054,9 +1100,9 @@ func (p *Parser) isDirectiveIdentifier(name string) bool {
 		"EQU": true,
 		"ORG": true,
 		"END": true,
-		"DS": true, "DEFS": true,
+		"DS":  true, "DEFS": true,
 		"INCBIN": true,
-		"IF": true, "IFDEF": true, "IFNDEF": true,
+		"IF":     true, "IFDEF": true, "IFNDEF": true,
 		"ELSE": true, "ENDIF": true,
 		"OPT": true,
 	}
@@ -1070,9 +1116,9 @@ func (p *Parser) parseDirectiveFromIdentifier() (*Directive, error) {
 		Name:      directiveName,
 		Arguments: []*Expression{},
 	}
-	
+
 	p.advance() // Skip directive name
-	
+
 	// Handle END directive specially (it can have optional argument)
 	if directiveName == "END" {
 		if p.current.Type == TokenIdentifier {
@@ -1141,13 +1187,13 @@ func (p *Parser) parseDirectiveFromIdentifier() (*Directive, error) {
 			}
 			directive.Arguments = append(directive.Arguments, expr)
 		}
-		
+
 		if p.current.Type == TokenComma {
 			p.advance()
 		} else {
 			break
 		}
 	}
-	
+
 	return directive, nil
 }

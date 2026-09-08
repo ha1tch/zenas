@@ -4,12 +4,14 @@
 > (default is `--cpu=Z80`, Z80N off). Every Z80N form is verified byte-for-byte
 > against **sjasmplus** (the de facto ZX Spectrum Next assembler, and the
 > reference implementation of Z80N encoding) by `tools/check_z80n_coverage.sh`.
-> The base Z80 set additionally matches sjasmplus across all 516 checked forms.
+> The base Z80 set additionally matches sjasmplus across all 534 checked forms.
 
-Implementation reference for adding Z80N support to zenas. Every opcode below is
-taken from the official SpecNext wiki (Extended Z80 instruction set) and
-cross-checked against the implementers' list in z88dk issue #312. zenas does not
-currently support Z80N; this document is the ground truth for that work.
+Every opcode below is taken from the official SpecNext wiki (Extended
+Z80 instruction set) and cross-checked against the implementers' list
+in z88dk issue #312. This document originated as the implementation
+reference for adding Z80N support to zenas; that work is done (see the
+status line above), and the table below now doubles as the encoding
+reference for the already-implemented set.
 
 All Z80N instructions are `ED`-prefixed. Gating them behind a `--next` flag (or a
 `Z80N`/`CPU Z80N` directive) is recommended so a stray `MUL` in plain Z80 source
@@ -46,6 +48,7 @@ is still an error.
 | `LDWS` | `ED A5` | 2 | none |
 | `LDDX` | `ED AC` | 2 | none |
 | `LDIRX` | `ED B4` | 2 | none |
+| `LDIRSCALE` | `ED B6` | 2 | none -- a plain repeating copy despite the name |
 | `LDPIRX` | `ED B7` | 2 | none |
 | `LDDRX` | `ED BC` | 2 | none |
 

@@ -1121,6 +1121,10 @@ func (a *Assembler) evalConditionExpr(expr *Expression) (int, error) {
 			return -v, nil
 		case "+":
 			return v, nil
+		case "LOW":
+			return v & 0xFF, nil
+		case "HIGH":
+			return (v >> 8) & 0xFF, nil
 		default:
 			return 0, fmt.Errorf("unsupported unary operator: %s", expr.Operator)
 		}
@@ -1918,6 +1922,10 @@ func (a *Assembler) evaluateExpression(expr *Expression) (int, error) {
 			return -v, nil
 		case "+":
 			return v, nil
+		case "LOW":
+			return v & 0xFF, nil
+		case "HIGH":
+			return (v >> 8) & 0xFF, nil
 		default:
 			return 0, fmt.Errorf("unsupported unary operator: %s", expr.Operator)
 		}

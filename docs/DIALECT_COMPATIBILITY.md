@@ -27,7 +27,7 @@ SpecNext-specific constructs; every realistic SpecNext program fails immediately
 on its meta-language (`DEVICE`, `{ }`, `DISP`), not on its instructions.
 
 Two layers, opposite verdicts: the **instruction body** of any pasmo or sjasmplus
-program already assembles (shared mnemonics, verified on 516 base + 31 Z80N
+program already assembles (shared mnemonics, verified on 534 base + 32 Z80N
 instructions). The **directive / meta-syntax layer** is where the gaps are - a
 small, closeable gap for pasmo and a large, semantic-subsystem gap for sjasmplus.
 
@@ -51,6 +51,7 @@ Verified present in zenas; these are NOT gaps despite first impressions:
 | bare unquoted `INCLUDE if.asm` | works in any mode; native source uses quoted form |
 | `IF`/`ELSE`/`ENDIF`, nested | works |
 | `EQU`, forward references | works |
+| `LOW x` / `HIGH x` byte extraction | works (0.11.2) -- see the "Closed" note below; missed by the original corpus diagnostic |
 
 ## pasmo gaps (measured, with cause and cost)
 
@@ -61,6 +62,18 @@ of the 34 sample files are blocked by it.
 
 `#` hex prefix, bare unquoted `INCLUDE`, and no-colon labels at any indentation
 (not just column 1) are now supported - see the "what already works" table above.
+
+### Closed (as of 0.11.2)
+
+**`LOW x` / `HIGH x`** - pasmo's unary byte-extraction operators were missing
+from the expression grammar entirely, undetected by the original pasmo/
+sjasmplus corpus diagnostic behind this document (neither sample suite
+happens to exercise them). Found instead by attempting to build Oakhollow, a
+real pasmo-sourced ZX Spectrum game, as an independent build-tool trial -
+a reminder that the corpus figures above are a lower bound on the real gap,
+not the full picture. Now implemented at both operand-parsing entry points
+and both expression evaluators; see the CHANGELOG and `assembler/low_high_test.go`.
+
 The remaining gaps below are the ones not yet closed.
 
 ### Cheap, isolated lexer additions (remaining)

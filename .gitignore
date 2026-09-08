@@ -30,3 +30,12 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Build output (release.sh writes build/zenas here)
+/build/
+
+# repoman's own edit journal (tool-internal, local to this session)
+.ed-journal.json
+
+# Release checkpoint zips (cut by release.sh, never meant to be committed)
+zenas-v*.zip

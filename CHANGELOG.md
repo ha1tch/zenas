@@ -4,11 +4,344 @@ All notable changes to zenas are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+Entries touching assembler code are tagged by layer -- `[encoder]`,
+`[lexer]`, `[parser]`, or `[macro]` -- as a single line-item prefix,
+e.g. `[encoder] The DDCB/FDCB instruction group: ...`. This exists
+specifically so a downstream fork with its own front end (a different
+lexer/parser serving multiple target architectures uniformly, for
+example) can tell at a glance whether a fix is portable as a diff
+(`[encoder]`, since `pkg/z80enc` and similar pure, primitive-typed
+packages hold zenas's actual opcode arithmetic independent of any
+particular operand representation) or needs independent verification
+against that fork's own front end (`[lexer]`/`[parser]`/`[macro]`,
+since those layers are deliberately not shared -- a genuinely
+different design concern per front end, not a gap). Entries before
+this convention started (anything prior to 0.9.0) are untagged.
+
+## [0.11.2] - 2026-09-05
+
+Found while porting Oakhollow, a real pasmo-sourced ZX Spectrum game, as
+a build-tool trial independent of the original pasmo/sjasmplus corpus
+diagnostic behind `docs/DIALECT_COMPATIBILITY.md` -- confirmation that
+gap is still incomplete even after that pass.
+
+### Added
+
+- `[parser]` pasmo's `LOW`/`HIGH` unary byte-extraction operators
+  (`LOW x` = bits 0-7, `HIGH x` = bits 8-15). Previously absent from
+  the expression grammar entirely -- not gated behind `.pasmo` mode,
+  simply unimplemented, so `CP LOW label` failed with a bare parse
+  error ("expected newline at end of line") rather than a dialect
+  refusal. Implemented in both operand-parsing entry points
+  (`parseIdentifierOperand`, the bare-instruction-operand path that
+  `CP LOW label` actually uses, and `parsePrimaryExpression`, reached
+  from directive arguments, parens, and expression continuations) so
+  the two can't drift, plus the two expression evaluators
+  (`evaluateExpression`, `evalConditionExpr`). Reserved as keywords
+  wherever an operand is parsed, matching pasmo's own reservation of
+  the words. See `assembler/low_high_test.go`.
+
+## [0.11.1] - 2026-09-04
+
+Closes the loop on v0.11.0's clock-count review: the automated
+coverage tooling itself had gaps in its own test lists, which is
+exactly why the missing-instruction bugs fixed in v0.11.0 survived
+undetected for as long as they did. Updated the generators so a
+future regression on any of these forms would actually be caught,
+then ran both reference-assembler cross-checks live (pasmo, sjasmplus)
+to confirm -- not just re-read the existing claims.
+
+### Fixed
+
+- `tools/gen_instr_coverage.py` never included `LD IX,(nn)`,
+  `LD (nn),IX`, or `EX (SP),IX`/`IY` in its own generated test list
+  -- confirmed the direct cause of those bugs going undetected: the
+  tool that's supposed to catch this class of thing never asked the
+  question. Added, along with the 5 ALU-on-`(IX+d)`/`(IY+d)`
+  mnemonics (`ADC`/`SBC`/`SUB`/`AND`/`XOR`/`OR`) the generator had
+  also never covered -- previously only `ADD A,(IX+d)` and
+  `CP (IX+d)` were exercised there, leaving the other 5 checked only
+  by a one-off manual test during the v0.11.0 review, not by this
+  generator's own repeatable cross-check.
+- `tools/z80n_coverage.txt` was missing `LDIRSCALE` (`ED B6`) --
+  same category of gap, same fix.
+- `docs/INSTRUCTION_SET.md`'s coverage table and prose, and the
+  matching claims in `docs/Z80N_REFERENCE.md` and
+  `docs/DIALECT_COMPATIBILITY.md`, all cited stale counts (516/29/545)
+  predating this update. Now 534/30/546, each re-verified live rather
+  than incremented by arithmetic: `PASS=534 MISSING=0 MISMATCH=0`
+  against `pasmo`, `PASS=32 FAIL=0` against the live `sjasmplus`
+  oracle (not the baked-in fallback bytes).
+
+## [0.11.0] - 2026-09-04
+
+A full clock-count review, cross-checked against reference Z80 timing
+data (map.grauw.nl/resources/z80instr.php for the base set; a Z80N
+core built from FPGA-simulation measurements, not quoted references,
+for the Next extensions). What started as a metadata-accuracy pass
+surfaced a severe correctness bug and several genuinely missing
+instructions along the way -- both are fixed here too, not left for
+a separate pass.
+
+### Fixed
+
+- **`[encoder]` A real correctness bug, not a cycle-count issue**:
+  `RLC`/`RRC`/`RL`/`RR`/`SLA`/`SRA`/`SRL`/`SLL`/`BIT`/`RES`/`SET` on a
+  half-index register (`IXH`/`IXL`/`IYH`/`IYL`) previously assembled
+  to truncated, invalid bytes (e.g. `RLC IXH` -> `DD CB 04`, missing
+  the mandatory displacement byte `DD CB`/`FD CB` always requires)
+  instead of being rejected. Confirmed against multiple independent
+  sources that this combination has no valid Z80 encoding at all --
+  `DD CB`/`FD CB` always addresses `(IX+d)`/`(IY+d)` memory, never a
+  register directly. `ApplyHalfIndexPrefix` now rejects it explicitly.
+- **`[encoder]` ~34 shared-registration cycle-count errors**: any
+  template shared between `(HL)` and `(IX+d)`/`(IY+d)`, between a
+  plain register and a half-index register, or between
+  `BC`/`DE`/`HL`/`SP` and `IX`/`IY`, reported one fixed number that
+  was only correct for one of the cases -- the `LD r,r'`/`LD r,n`/
+  `LD r,(HL)` family, ALU-on-register/indirect, `INC`/`DEC` (register
+  and indirect), 16-bit loads and arithmetic, `PUSH`/`POP`, `JP`
+  indirect, `IN`/`OUT` register-port forms, and the `BIT`/`RES`/`SET`/
+  rotate-shift indirect forms.
+- **`[encoder]` 3 isolated wrong values**: `RET cc` reported 5 (the
+  not-taken value) while `JR cc`/`CALL cc`/`DJNZ` all consistently
+  report the taken/longer value -- inconsistent with the codebase's
+  own established convention. `INIR`/`INDR`/`OTIR`/`OTDR` and
+  `LDIR`/`LDDR`/`CPIR`/`CPDR` all reported 16 (the last-iteration
+  value) instead of 21 (the repeat value), same inconsistency.
+- **`[encoder]` 7 Z80N cycle-count errors**: `OUTINB`, `LDIX`, `LDWS`,
+  `LDDX`, `LDIRX`, `LDPIRX`, and `LDDRX` were all wrongly sharing
+  `SWAPNIB`'s 8 T-state value instead of their real
+  16/14/16/21/21/21.
+- **`[encoder]` `LD IX,(nn)` / `LD IY,(nn)` / `LD (nn),IX` /
+  `LD (nn),IY` had no encoding at all** -- confirmed a genuine gap,
+  not a design decision: `z80enc.EncodeLDrpAddr`/`EncodeLDAddrRp`
+  simply never had an `IX`/`IY` case. Fixed (`DD 2A`/`FD 2A` and
+  `DD 22`/`FD 22`, the same base opcode as the `HL` form under its
+  own index prefix).
+- **`[encoder]` `EX (SP),IX` / `EX (SP),IY` had no encoding at all**
+  -- same category of gap, fixed the same way (`DD E3`/`FD E3`).
+- **`[encoder]` `IN F,(C)`**: a second, real spelling for the same
+  `ED70` opcode `IN (C)` already covered -- previously rejected by
+  this codebase (a genuine gap, not a design decision: `F` wasn't in
+  `register8Set` at all). `F` now parses only in this one context
+  (`z80enc.EncodeIN` special-cases it); every other 8-bit-register use
+  of `F` (`LD F,A`, `INC F`, etc.) is still correctly rejected.
+- `[encoder]` `encodeLDrr`'s adapter was discarding `z80enc`'s
+  specific error (e.g. "invalid 8-bit register") and substituting a
+  hardcoded "registers I and R may only be used as..." message
+  regardless of the actual problem -- fixed to propagate the real
+  error.
+- Removed a duplicated `LD` 16-bit registration block (four templates
+  registered twice, verbatim) -- harmless dead code since the dispatch
+  loop's first match always won, but confirmed exact and removed
+  rather than left in place.
+
+### Added
+
+- **`[encoder]` `InstructionTemplate.CyclesFunc` and its accessor
+  `CyclesFor`**: an optional per-template function computing the real
+  T-state count from the actual resolved operands, for the ~34 cases
+  above where a single fixed `Cycles` value cannot be correct. Purely
+  additive -- the other ~120 templates never needed it and still use
+  plain `Cycles`.
+- **`[encoder]` `Encoder.EncodeWithCycles`**: returns the real cycle
+  count alongside the encoded bytes -- the only way to observe
+  `CyclesFor`'s result from outside this package, since `Encode`
+  itself only ever returned bytes and which template matched wasn't
+  otherwise exposed.
+- **`[encoder]` `LDIRSCALE` (`ED B6`)**: a real, documented Z80N
+  instruction (a plain repeating copy, despite what its name
+  suggests) that was completely absent from this codebase -- added
+  alongside the timing fixes above rather than left for a separate
+  pass.
+- `assembler/cycles_test.go`: 67 test cases (`TestCyclesFor`,
+  `TestCyclesForZ80N`) exercising every fixed category via
+  `EncodeWithCycles`, plus the `EX (SP),IX`/`LD IX,(nn)`-family gap
+  fixes and the two isolated-value fixes.
+- `pkg/z80enc`: regression coverage for the half-index/CB-prefix
+  correctness fix (`TestApplyHalfIndexPrefix`) and the new
+  `EncodeEXSPHL("IX")`/`("IY")` forms.
+- `assembler/ddfdcb_copy_test.go`: `TestBareINOUT`/
+  `TestFRegisterOnlyValidForINFC` cover the `IN F,(C)` fix and confirm
+  `F` stays rejected everywhere else an 8-bit register could appear.
+
+## [0.10.0] - 2026-09-03
+
+`pkg/z80enc`'s extraction, complete. Every one of `encoder.go`'s
+`encode*` functions (57 total) plus the half-index-register handling
+(`applyHalfIndexPrefix`, called from the top-level dispatch loop
+rather than registered per-mnemonic, but the same category of pure
+opcode knowledge) now delegates to `pkg/z80enc` -- verified with a
+tree-wide sweep confirming zero remaining functions still compute
+bytes inline. What started as a pilot on the group that originally
+motivated this (0.9.0's DDCB/FDCB fix) and an interim checkpoint
+(0.9.1, 11 of 57) is now the whole encoder.
+
+### Added
+
+- `[encoder]` **`pkg/z80enc/reg16.go`**: the 16-bit register-pair
+  family -- `EncodeRp16Imm`, `EncodeRp16Shift4`, `EncodeADDHLrp`,
+  `EncodeStackOp`, `EncodeLDrpAddr`, `EncodeLDAddrRp`, `EncodeED16`.
+- `[encoder]` **`pkg/z80enc/indirect.go`**: the indirect-memory family
+  -- `EncodeIndirectByte`, `EncodeIndirectImm8`,
+  `EncodeLDRegFromIndirect`, `EncodeLDIndirectFromReg`.
+- `[encoder]` **`pkg/z80enc/branch.go`**: the jump/call/branch family
+  -- `EncodeAddr16`, `EncodeCondAddr16`, `EncodeRelBranch`,
+  `EncodeCondRelBranch`, `EncodeJPIndirect`, `EncodeCondOnly`,
+  `EncodeRST`.
+- `[encoder]` **`pkg/z80enc/misc.go`**: `EncodeEX`, `EncodeEXSPHL`,
+  `EncodeIM`, `EncodeOUT`, `EncodeIN`, `ApplyHalfIndexPrefix`,
+  `EncodeSimple`, `EncodeLDSPHL`, `EncodeINFC`, `EncodeOUTC0` -- the
+  undocumented `IN (C)`/`OUT (C),0` forms included, since they're the
+  same category of shareable opcode knowledge as everything else here.
+- `[encoder]` **`pkg/z80enc/z80n.go`**: the whole Z80N extension
+  family -- `EncodeFixedOperand`, `EncodeFixedOperandPair`,
+  `EncodeZ80NJPc`, `EncodeZ80NTEST`, `EncodeZ80NADDrrA`,
+  `EncodeZ80NADDrrnn`, `EncodeZ80NPUSHnn`, `EncodeZ80NNEXTREGnn`,
+  `EncodeZ80NNEXTREGnA`.
+- `[encoder]` `pkg/z80enc/reg8.go` gained `EncodeImm8` -- the
+  ALU-immediate shape (`SUB n`/`AND n`/etc). Barely needs a function
+  at all (base is already fixed per mnemonic, no register lookup
+  involved); included for consistency with the rest of the package
+  rather than because the arithmetic is complex.
+- `[encoder]` `encoder.go`'s corresponding 46 functions (the remainder
+  after 0.9.1's 11) are now thin adapters, each verified independently
+  against hand-computed or documented values before being wired in,
+  then reverified with a full build+test pass -- the same discipline
+  every prior batch in this package followed, at the same
+  per-function granularity, not relaxed for the larger remaining
+  scope.
+- `[encoder]` `pkg/z80enc` now carries 49 test functions of its own
+  across all 8 source files (1602 lines total) -- every function a
+  downstream consumer would import directly has standalone coverage,
+  not just indirect coverage through `encoder.go`'s own test suite.
+- **`release.sh` now runs a badcode scan automatically**, first,
+  unconditionally, when `repoman` is on `PATH` -- matching
+  `gorepoman`'s own `relcore` convention. Soft-skips with a clear
+  warning if `repoman` itself isn't available, rather than either
+  silently skipping or hard-failing the release over an optional
+  tool. Verified all three paths directly (clean pass, soft-skip, and
+  a real failure with a planted marker, confirming the correct exit
+  code without any piping that could mask it) before trusting it.
+  Found and fixed via this: the vendored, unused Python `repoman/`
+  copy (removed in this same release) had been leaking an
+  AI-attribution mention into every checkpoint shipped so far,
+  uncaught, since this project's own release process never ran that
+  gate before now.
+- **`docs/ARCHITECTURE.md`**, new -- how the code itself is organised
+  (the assembly pipeline, `pkg/z80enc`'s own file-by-file breakdown,
+  `pkg/build`), distinct from `ZENAS_DESIGN.md`'s existing "why the
+  language looks this way" scope. Filled a genuine gap (no doc
+  described the code-level structure before this, not something that
+  had gone stale) rather than replacing anything.
+- **`README.md`** gained a "Library" section introducing `pkg/z80enc`
+  -- previously undocumented there entirely.
+
+### Fixed
+
+- `[encoder]` `pkg/z80enc/ddfdcb.go`'s private `indexPrefix`
+  (duplicating what's now the shared, exported `IndexPrefix` in
+  `registers.go`) removed; `CopyRegister` exported too, matching the
+  naming convention the rest of the package settled into once it grew
+  past the original single-file pilot.
+- **`docs/INSTRUCTION_SET.md` had a genuinely wrong claim**: its "Not
+  implemented" section explicitly named `RLC (IX+d),B` and `SLL`/
+  `SL1` as unencoded -- exactly the instructions this same release
+  adds. Corrected, with a new section covering everything the base
+  documented/half-register/Z80N counts don't include (those tools
+  can't cross-check several of these at all), pointing to
+  `tools/golden_vectors.txt` as the verification source.
+- **`docs/Z80N_REFERENCE.md` contradicted itself**: its own status
+  banner said "implemented and validated" while its body text, never
+  reconciled after Z80N support actually shipped, still said "zenas
+  does not currently support Z80N". Fixed.
+- **`.gitignore` was missing `build/`, `.ed-journal.json`
+  (`repoman`'s own edit journal), and `zenas-v*.zip`** -- all three
+  were showing as untracked. Added.
+- Stale artefacts removed: an old checkpoint zip, the `build/`
+  directory's leftover binary.
+
+## [0.9.1] - 2026-09-03
+
+Interim checkpoint: `pkg/z80enc`'s extraction, still in progress
+(11 of 57 encode functions moved so far -- see this entry's own notes
+below for exactly which), released as its own version rather than
+left as uncommitted work between checkpoints.
+
+### Added
+
+- `[encoder]` **`pkg/z80enc/registers.go`**: the shared register/
+  condition-code mappings the rest of the package's encode functions
+  build on -- `Reg8`, `Reg16`, `StackReg16`, `Condition`,
+  `JRCondition`, `IndexPrefix` -- exported so a consumer isn't limited
+  to the DDCB/FDCB group alone.
+- `[encoder]` **`pkg/z80enc/reg8.go`**: `EncodeReg8Shift3`,
+  `EncodeReg8Imm`, `EncodeReg8`, `EncodeCBReg8`, `EncodeCBBitReg8`,
+  `EncodeLDrr` -- the 8-bit-register-operand shape family (`INC`/`DEC
+  r`, `LD r,n`, `LD r,r'` including its `I`/`R` ED-prefixed special
+  cases, `ALU r`, `CB r`, `BIT`/`RES`/`SET b,r`). Verified against
+  hand-computed values before touching `encoder.go` at all.
+- `[encoder]` `encoder.go`'s own `encodeLDrr`, `encodeLDrn`,
+  `encodeINCr`, `encodeDECr`, `encodeCBr`, `encodeBITbr`, `encodeRESbr`
+  are now thin adapters over the above, each verified with a full
+  build+test pass before moving to the next. 11 of 57 encode functions
+  now extracted in total (the 4 from the DDCB/FDCB pilot plus these 7);
+  the remaining ~46 (16-bit register-pair ops, the rest of the
+  indirect-memory family, jump/call/branch, `IN`/`OUT`, `EX`, `IM`,
+  half-index handling, the whole Z80N extension set) have not been
+  moved yet -- this entry is honestly a checkpoint mid-extraction, not
+  a claim of completion.
+- `[encoder]` `pkg/z80enc`'s own duplicate `indexPrefix` (private,
+  only in the DDCB/FDCB file) consolidated into the new shared
+  `IndexPrefix`; `CopyRegister` (the DDCB/FDCB copy-destination
+  validator) is now exported too, matching the naming convention of
+  everything else in the package.
+
+### Fixed
+
+- **The vendored, unused Python `repoman/` copy removed entirely.**
+  Confirmed not referenced by `release.sh`, `syncver.sh`, or the
+  `Makefile` anywhere -- dead weight, and its own `CHANGELOG.md`
+  contained an AI-attribution mention that a manual `badcode` check
+  caught (this project's own `release.sh` doesn't run that gate
+  automatically the way `gorepoman relcore`-based projects do, so this
+  had been present in every checkpoint shipped so far without being
+  caught). `release.sh`'s zip-exclude list also gets `repoman/*` added
+  defensively, matching its existing `build/*`/`attic/*` entries.
+
 ## [0.9.0] - 2026-09-02
 
 ### Added
 
-- **The DDCB/FDCB instruction group**: `RLC`/`RRC`/`RL`/`RR`/`SLA`/
+- `[encoder]` **`pkg/z80enc`**: pure, dependency-free Z80 opcode-encoding
+  functions -- currently the DDCB/FDCB group (`EncodeCBIndirect`,
+  `EncodeCBBitIndirect`, `EncodeDDFDCBCopy`, `EncodeDDFDCBBitCopy`),
+  taking plain Go primitives (register names as strings, displacements
+  as `int8`, bit numbers as `uint8`) with zero dependency on zenas's
+  own `ResolvedOperand` type. Extracted specifically so a fork with its
+  own front end can import the real opcode arithmetic directly instead
+  of re-deriving it from release notes each time a fix lands -- the
+  exact problem the DDCB/FDCB fix itself caused for one such fork,
+  since the logic ported cleanly but the code could not. `encoder.go`'s
+  own `encodeCBHL`/`encodeCBbHL`/`encodeDDFDCBCopy`/`encodeDDFDCBbCopy`
+  are now thin adapters over this package, not duplicate logic --
+  verified independently before and after the refactor, with zero
+  behaviour change. Other instruction groups have not been moved here
+  yet; this is a pilot on the group that motivated it, not a claim
+  that the whole encoder has been restructured.
+- `[encoder]` **`tools/golden_vectors.txt`**: verified mnemonic/bytes
+  pairs as plain data (`SOURCE|HEXBYTES`, one instruction per line),
+  for a downstream fork to check its own encoder against directly,
+  without hand-transcribing bytes from release notes. 531 lines: every
+  form in `tools/instr_coverage_list.txt` (zenas's own assembled
+  output for the documented instruction set, already cross-checked
+  against pasmo as part of this project's own release process -- this
+  file exports that already-trusted result rather than re-running the
+  check) plus the undocumented instructions added in this release,
+  which pasmo cannot cross-check at all. Regenerate with
+  `tools/gen_golden_vectors.sh`.
+- `[encoder]` **The DDCB/FDCB instruction group**: `RLC`/`RRC`/`RL`/`RR`/`SLA`/
   `SRA`/`SRL` and `BIT`/`RES`/`SET n` on `(IX+d)`/`(IY+d)`, previously
   entirely unencodable -- confirmed no DDCB/FDCB handling existed
   anywhere in the encoder before this. zen80 already executes this
@@ -19,14 +352,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   is identical to the existing `(HL)` form's own; only the index
   prefix and displacement byte are inserted before it, so the fix
   extends `encodeCBHL`/`encodeCBbHL` directly rather than duplicating
-  them. The undocumented copy-to-register forms (e.g. `RLC (IX+d),B`)
-  and `SLL`/`SLS` (undocumented, and not supported for `(HL)` either)
-  are still not implemented -- out of scope for this fix, not silently
-  dropped.
+  them.
+- `[encoder]` **The DDCB/FDCB undocumented copy-to-register forms**: `RLC (IX+d),B`,
+  `SET n,(IX+d),A`, etc. -- the operation is performed on the indexed
+  memory operand exactly as the documented form, and the result is
+  also copied into the named register. Verified against the exact
+  worked examples multiple independent Z80 documentation sources
+  agree on (`DDCB0100` = `RLC (IX+1),B`, `DDCB02FF` = `SET 7,(IX+2),A`),
+  not just internally-consistent opcode arithmetic. `IXH`/`IXL`/`IYH`/
+  `IYL` are explicitly rejected as copy destinations -- confirmed real
+  hardware always copies into plain H/L here, regardless of which
+  DD/FD prefix is active for the indexed memory operand itself, so
+  accepting the half-index names would be misleading notation for
+  identical bytes. `BIT` has no copy form and none was registered for
+  it -- confirmed (same sources) that all 8 register-field encodings
+  of a DDCB/FDCB `BIT` instruction are identical, since `BIT` never
+  writes a result anywhere but the flags.
+- `[encoder]` **`SLL`/`SLI`/`SL1`** (synonyms for the same opcode, `CB 30`-`37`):
+  the undocumented 8th shift, confirmed "quite commonly used" despite
+  never being officially documented. All forms: register, `(HL)`,
+  `(IX+d)`, `(IY+d)`, and its own copy-to-register variants -- nearly
+  free to add, since it reuses the exact encode functions `SLA`
+  already used, just a different opcode base.
+- `[encoder]` **The bare undocumented `IN (C)` and `OUT (C),0`** (`ED70`/`ED71`).
+  `IN (C)` reads the port and sets flags exactly like the documented
+  `IN r,(C)` forms, but discards the byte read. `OUT (C),0` outputs a
+  literal zero, no source register. (`IN F,(C)`, a second widely-used
+  alias for the same `ED70` opcode, was not added -- it would need
+  special-casing `F` as a pseudo-register for this one instruction;
+  `IN (C)` alone already covers the opcode.)
+
+### Known, minor, and inconsequential right now
+
+- The cycle-count metadata for the new `(IX+d)`/`(IY+d)` DDCB/FDCB
+  registrations inherits the existing `(HL)` registration's value
+  (15) rather than the correct 23 T-states for the indexed forms,
+  since both share one `encodeCBHL`/`encodeCBbHL`-based registration.
+  Checked whether this matters: it doesn't, currently -- confirmed
+  `template.Cycles` is stored but never read anywhere in this
+  codebase; the CLI's own cycle-estimate output uses a separate,
+  explicitly-disclaimed "very rough, byte-count-based" heuristic
+  instead. Noted here rather than silently left inaccurate, in case
+  something wires the real field up to real output later.
 
 ### Fixed
 
-- **A real hex-literal parsing bug, reported by the zenpoint project**:
+- `[lexer]` **A real hex-literal parsing bug, reported by the zenpoint project**:
   a traditional-notation hex literal whose first significant digit is
   itself a letter -- `0BCH`, `0FFh`, `0DEADh` (the leading `0` exists
   specifically so it doesn't read as an identifier) -- was misread as

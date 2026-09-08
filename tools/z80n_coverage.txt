@@ -27,5 +27,6 @@ LDIX|ed a4
 LDWS|ed a5
 LDDX|ed ac
 LDIRX|ed b4
+LDIRSCALE|ed b6
 LDPIRX|ed b7
 LDDRX|ed bc

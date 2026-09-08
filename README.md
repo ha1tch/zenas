@@ -160,12 +160,38 @@ directive layers (macro systems, `DEVICE`, structs) is a different matter —
 the measured state of that compatibility, gap by gap, is documented in
 [`docs/DIALECT_COMPATIBILITY.md`](docs/DIALECT_COMPATIBILITY.md).
 
+## Library
+
+`pkg/z80enc` is zenas's own opcode-encoding knowledge, exported directly:
+pure, dependency-free functions taking plain Go primitives (register
+names as strings, displacements as `int8`, bit numbers as `uint8`)
+rather than any parser-specific operand type. `encoder.go`'s own
+`encode*` functions are thin adapters over this package, not duplicate
+logic, so a fork with its own front end can import the real opcode
+arithmetic directly instead of re-deriving it from release notes each
+time a fix lands:
+
+```go
+import "github.com/ha1tch/zenas/pkg/z80enc"
+
+b, err := z80enc.EncodeDDFDCBCopy(0x00, "IX", 1, "B") // RLC (IX+1),B
+// b == []byte{0xDD, 0xCB, 0x01, 0x00}
+```
+
+Covers every instruction group in this codebase's own encoder: 8-bit
+and 16-bit register operations, indirect-memory addressing, jump/call/
+branch, the DDCB/FDCB group (including its undocumented copy-to-
+register forms), the Z80N extensions, and more. See the package's own
+doc comments for the full surface.
+
 ## Documentation
 
 - **[Programming guide](docs/ZENAS_PROGRAMMING.md)** — coming from another
   assembler: what's familiar, what differs, and what zenas uniquely enables.
 - **[Design rationale](docs/ZENAS_DESIGN.md)** — the single idea behind
   the unusual features, and what the C-style layer is (and is not) for.
+- **[Architecture](docs/ARCHITECTURE.md)** — how the code itself is
+  organised: the assembly pipeline, `pkg/z80enc`, and the rest.
 - **[Seam comparison](docs/SEAM_COMPARISON.md)** — how far other assemblers'
   facilities go towards the same design, as a set of reference points.
 - **[Packaged-program tutorial](docs/PACKAGED_PROGRAM_TUTORIAL.md)** — a worked

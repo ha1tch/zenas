@@ -3,6 +3,8 @@ package assembler
 import (
 	"fmt"
 	"strings"
+
+	"github.com/ha1tch/zenas/pkg/z80enc"
 )
 
 // Encoder converts parsed instructions into Z80 machine code
@@ -19,6 +21,123 @@ type InstructionTemplate struct {
 	BaseOpcode   uint8
 	Prefix       uint8
 	Cycles       int
+	// CyclesFunc, when set, computes the real T-state count from the
+	// actual resolved operands, overriding Cycles. Needed wherever a
+	// single (mnemonic, operand-types) template covers forms whose
+	// real timing differs by which specific register is used -- (HL)
+	// vs (IX+d)/(IY+d) is the largest such family (indexed addressing
+	// costs the extra DD/FD prefix and displacement fetch), but it
+	// also covers plain vs half-index 8-bit registers, BC/DE/HL/SP vs
+	// IX/IY for 16-bit loads, and JP (HL) vs JP (IX)/(IY). Cycles
+	// alone cannot represent these correctly since one template can
+	// match several real instructions with different true timings;
+	// use CyclesFor to read the right value regardless of which field
+	// is actually populated. Found and fixed as part of a full
+	// cross-check against a reference Z80 timing table (25 wrong
+	// values from this exact class of sharing), not written in
+	// anticipation -- most templates never needed this and still
+	// don't.
+	CyclesFunc func([]*ResolvedOperand) int
+}
+
+// CyclesFor returns the correct T-state count for this template given
+// the actual operands: CyclesFunc's result if set, otherwise the
+// fixed Cycles value. This is the field to read, not Cycles directly,
+// since Cycles alone is wrong for every template that has a
+// CyclesFunc.
+func (t *InstructionTemplate) CyclesFor(operands []*ResolvedOperand) int {
+	if t.CyclesFunc != nil {
+		return t.CyclesFunc(operands)
+	}
+	return t.Cycles
+}
+
+// isHalfIndexReg reports whether name is one of the undocumented
+// half-index registers (IXH/IXL/IYH/IYL), which every 8-bit-register
+// timing table entry treats as a separate, slower case from the plain
+// 8-bit registers -- shared by several CyclesFunc implementations
+// below rather than repeated in each.
+func isHalfIndexReg(name string) bool {
+	switch name {
+	case "IXH", "IXL", "IYH", "IYL":
+		return true
+	}
+	return false
+}
+
+// isIndexReg16 reports whether name is IX or IY, the two 16-bit index
+// registers that cost extra T-states relative to the general-purpose
+// pairs (BC/DE/HL/SP) in most 16-bit-register instruction shapes --
+// shared by several CyclesFunc implementations below.
+func isIndexReg16(name string) bool {
+	return name == "IX" || name == "IY"
+}
+
+// aluRegCycles is the shared CyclesFunc for the 8 ALU-on-register
+// registrations (ADD/ADC/SBC A,r and SUB/AND/XOR/OR/CP r): 4 for a
+// plain register, 8 for a half-index register. The last operand is
+// always the register operand, regardless of whether A was written
+// explicitly (2-operand ADD/ADC/SBC form) or implied (1-operand
+// SUB/AND/XOR/OR/CP form).
+func aluRegCycles(ops []*ResolvedOperand) int {
+	if isHalfIndexReg(ops[len(ops)-1].Register) {
+		return 8
+	}
+	return 4
+}
+
+// aluIndirectCycles is the shared CyclesFunc for the 8 ALU-on-indirect
+// registrations: 7 for (HL), 19 for (IX+d)/(IY+d). The last operand
+// is always the indirect operand.
+func aluIndirectCycles(ops []*ResolvedOperand) int {
+	if isIndexReg16(ops[len(ops)-1].Register) {
+		return 19
+	}
+	return 7
+}
+
+// incDecIndirectCycles: 11 for INC/DEC (HL), 23 for INC/DEC (IX+d)/(IY+d).
+func incDecIndirectCycles(ops []*ResolvedOperand) int {
+	if isIndexReg16(ops[0].Register) {
+		return 23
+	}
+	return 11
+}
+
+// incDecRegCycles: 4 for a plain register, 8 for a half-index register.
+func incDecRegCycles(ops []*ResolvedOperand) int {
+	if isHalfIndexReg(ops[0].Register) {
+		return 8
+	}
+	return 4
+}
+
+// incDecRp16Cycles: 6 for BC/DE/HL/SP, 10 for IX/IY.
+func incDecRp16Cycles(ops []*ResolvedOperand) int {
+	if isIndexReg16(ops[0].Register) {
+		return 10
+	}
+	return 6
+}
+
+// cbIndirectCycles: 15 for (HL), 23 for (IX+d)/(IY+d) -- shared by
+// RES/SET b,(...) and the rotate/shift-on-indirect family, which have
+// the same timing. The indirect operand is always last, whether the
+// template has one operand (rotate/shift) or two (RES/SET, with the
+// bit number first).
+func cbIndirectCycles(ops []*ResolvedOperand) int {
+	if isIndexReg16(ops[len(ops)-1].Register) {
+		return 23
+	}
+	return 15
+}
+
+// cbBitIndirectCycles: 12 for BIT b,(HL), 20 for BIT b,(IX+d)/(IY+d).
+func cbBitIndirectCycles(ops []*ResolvedOperand) int {
+	if isIndexReg16(ops[len(ops)-1].Register) {
+		return 20
+	}
+	return 12
 }
 
 // Register mappings extracted from zen80 emulator's getRegister8 function
@@ -64,14 +183,24 @@ func (e *Encoder) EnableZ80N() {
 	simpleN := []struct {
 		mnemonic string
 		opcode   uint8
+		cycles   int
 	}{
-		{"SWAPNIB", 0x23}, {"OUTINB", 0x90},
-		{"PIXELDN", 0x93}, {"PIXELAD", 0x94}, {"SETAE", 0x95},
-		{"LDIX", 0xA4}, {"LDWS", 0xA5}, {"LDDX", 0xAC},
-		{"LDIRX", 0xB4}, {"LDPIRX", 0xB7}, {"LDDRX", 0xBC},
+		{"SWAPNIB", 0x23, 8}, {"OUTINB", 0x90, 16},
+		{"PIXELDN", 0x93, 8}, {"PIXELAD", 0x94, 8}, {"SETAE", 0x95, 8},
+		{"LDIX", 0xA4, 16}, {"LDWS", 0xA5, 14}, {"LDDX", 0xAC, 16},
+		// LDIRX/LDIRSCALE/LDPIRX/LDDRX repeat; 21 is the repeat count,
+		// matching the same convention LDIR/CPIR/INIR/OTIR use (the
+		// last-iteration value, 16, is shorter but not what a single
+		// Cycles field reports here). LDIRSCALE (ED B6) was entirely
+		// missing before this fix -- confirmed absent from this
+		// codebase, not a design decision -- despite decoding as a
+		// real, documented instruction (a plain repeating copy; the
+		// scaling the name suggests is not actually present in the
+		// silicon this assembler targets).
+		{"LDIRX", 0xB4, 21}, {"LDIRSCALE", 0xB6, 21}, {"LDPIRX", 0xB7, 21}, {"LDDRX", 0xBC, 21},
 	}
 	for _, s := range simpleN {
-		e.addInstruction(s.mnemonic, []OperandType{}, s.opcode, 0xED, 8, encodeSimple)
+		e.addInstruction(s.mnemonic, []OperandType{}, s.opcode, 0xED, s.cycles, encodeSimple)
 	}
 
 	// Fixed-operand forms: the operand is hard-wired, so accept both the bare
@@ -108,6 +237,41 @@ func (e *Encoder) EnableZ80N() {
 }
 
 // Encode converts an instruction with resolved operands to machine code
+// EncodeWithCycles behaves exactly like Encode, but also returns the
+// real T-state count for the specific operands given -- whichever
+// value CyclesFor returns for the template that actually matched.
+// This is the only way to observe accurate cycle data from outside
+// this package: Encode itself only returns bytes, and which template
+// matched (needed to call CyclesFor at all) isn't otherwise exposed.
+func (e *Encoder) EncodeWithCycles(mnemonic string, operands []*ResolvedOperand) ([]uint8, int, error) {
+	templates, exists := e.instructions[strings.ToUpper(mnemonic)]
+	if !exists {
+		return nil, 0, fmt.Errorf("unknown instruction: %s", mnemonic)
+	}
+
+	var firstErr error
+	for _, template := range templates {
+		if e.matchesTemplate(template, operands) {
+			code, err := template.Encode(template, operands)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			finalCode, err := applyHalfIndexPrefix(code, operands)
+			if err != nil {
+				return nil, 0, err
+			}
+			return finalCode, template.CyclesFor(operands), nil
+		}
+	}
+	// No template matched (or all matched-but-failed) -- reuse Encode's
+	// own detailed error-message construction rather than duplicating it.
+	_, err := e.Encode(mnemonic, operands)
+	return nil, 0, err
+}
+
 func (e *Encoder) Encode(mnemonic string, operands []*ResolvedOperand) ([]uint8, error) {
 	templates, exists := e.instructions[strings.ToUpper(mnemonic)]
 	if !exists {
@@ -206,27 +370,84 @@ func (e *Encoder) operandTypeMatches(expected OperandType, operand *ResolvedOper
 // These patterns are extracted from the zen80 emulator's decode.go
 func (e *Encoder) initializeInstructions() {
 	// Block 1: 8-bit register loads (from executeBlock1)
-	e.addInstruction("LD", []OperandType{OperandRegister8, OperandRegister8}, 0x40, 0x00, 4, encodeLDrr)
-	e.addInstruction("LD", []OperandType{OperandRegister8, OperandImmediate8}, 0x06, 0x00, 7, encodeLDrn)
-	e.addInstruction("LD", []OperandType{OperandRegister8, OperandIndirect}, 0x46, 0x00, 7, encodeLDrHL)
-	e.addInstruction("LD", []OperandType{OperandIndirect, OperandRegister8}, 0x70, 0x00, 7, encodeLDHLr)
-	e.addInstruction("LD", []OperandType{OperandIndirect, OperandImmediate8}, 0x36, 0x00, 10, encodeLDHLn)
+	e.addInstructionVarCycles("LD", []OperandType{OperandRegister8, OperandRegister8}, 0x40, 0x00, func(ops []*ResolvedOperand) int {
+		a, b := ops[0].Register, ops[1].Register
+		if a == "I" || a == "R" || b == "I" || b == "R" {
+			return 9 // LD A,I / LD A,R / LD I,A / LD R,A -- ED-prefixed
+		}
+		if isHalfIndexReg(a) || isHalfIndexReg(b) {
+			return 8 // LD IXh,p / LD p,IXh -- the prefix costs 4 extra T-states
+		}
+		return 4
+	}, encodeLDrr)
+	e.addInstructionVarCycles("LD", []OperandType{OperandRegister8, OperandImmediate8}, 0x06, 0x00, func(ops []*ResolvedOperand) int {
+		if isHalfIndexReg(ops[0].Register) {
+			return 11 // LD IXh,n
+		}
+		return 7
+	}, encodeLDrn)
+	e.addInstructionVarCycles("LD", []OperandType{OperandRegister8, OperandIndirect}, 0x46, 0x00, func(ops []*ResolvedOperand) int {
+		switch ops[1].Register {
+		case "IX", "IY":
+			return 19 // LD r,(IX+d)
+		case "":
+			return 13 // LD A,(nn)
+		default:
+			return 7 // LD r,(HL) / LD A,(BC) / LD A,(DE)
+		}
+	}, encodeLDrHL)
+	e.addInstructionVarCycles("LD", []OperandType{OperandIndirect, OperandRegister8}, 0x70, 0x00, func(ops []*ResolvedOperand) int {
+		switch ops[0].Register {
+		case "IX", "IY":
+			return 19 // LD (IX+d),r
+		case "":
+			return 13 // LD (nn),A
+		default:
+			return 7 // LD (HL),r / LD (BC),A / LD (DE),A
+		}
+	}, encodeLDHLr)
+	e.addInstructionVarCycles("LD", []OperandType{OperandIndirect, OperandImmediate8}, 0x36, 0x00, func(ops []*ResolvedOperand) int {
+		if isIndexReg16(ops[0].Register) {
+			return 19 // LD (IX+d),n
+		}
+		return 10 // LD (HL),n
+	}, encodeLDHLn)
 
 	// Extended 16-bit loads
-	e.addInstruction("LD", []OperandType{OperandRegister16, OperandImmediate16}, 0x01, 0x00, 10, encodeLDrpnn)
-	e.addInstruction("LD", []OperandType{OperandRegister16, OperandIndirect}, 0x2A, 0x00, 16, encodeLDrpaddr)
-	e.addInstruction("LD", []OperandType{OperandIndirect, OperandRegister16}, 0x22, 0x00, 16, encodeLDaddrrp)
-	e.addInstruction("LD", []OperandType{OperandRegister16, OperandRegister16}, 0xF9, 0x00, 6, encodeLDSPHL)
+	e.addInstructionVarCycles("LD", []OperandType{OperandRegister16, OperandImmediate16}, 0x01, 0x00, func(ops []*ResolvedOperand) int {
+		if isIndexReg16(ops[0].Register) {
+			return 14 // LD IX/IY,nn
+		}
+		return 10 // LD BC/DE/HL/SP,nn
+	}, encodeLDrpnn)
+	e.addInstructionVarCycles("LD", []OperandType{OperandRegister16, OperandIndirect}, 0x2A, 0x00, func(ops []*ResolvedOperand) int {
+		if ops[0].Register == "HL" {
+			return 16 // LD HL,(nn) -- unprefixed, shorter
+		}
+		return 20 // LD BC/DE/SP,(nn) (ED-prefixed) / LD IX/IY,(nn)
+	}, encodeLDrpaddr)
+	e.addInstructionVarCycles("LD", []OperandType{OperandIndirect, OperandRegister16}, 0x22, 0x00, func(ops []*ResolvedOperand) int {
+		if ops[1].Register == "HL" {
+			return 16 // LD (nn),HL -- unprefixed, shorter
+		}
+		return 20 // LD (nn),BC/DE/SP (ED-prefixed) / LD (nn),IX/IY
+	}, encodeLDaddrrp)
+	e.addInstructionVarCycles("LD", []OperandType{OperandRegister16, OperandRegister16}, 0xF9, 0x00, func(ops []*ResolvedOperand) int {
+		if isIndexReg16(ops[1].Register) {
+			return 10 // LD SP,IX/IY
+		}
+		return 6 // LD SP,HL
+	}, encodeLDSPHL)
 
 	// Block 2: ALU operations (from executeBlock2)
-	e.addInstruction("ADD", []OperandType{OperandRegister8, OperandRegister8}, 0x80, 0x00, 4, encodeALUr)
-	e.addInstruction("ADC", []OperandType{OperandRegister8, OperandRegister8}, 0x88, 0x00, 4, encodeALUr)
-	e.addInstruction("SUB", []OperandType{OperandRegister8}, 0x90, 0x00, 4, encodeALUr)
-	e.addInstruction("SBC", []OperandType{OperandRegister8, OperandRegister8}, 0x98, 0x00, 4, encodeALUr)
-	e.addInstruction("AND", []OperandType{OperandRegister8}, 0xA0, 0x00, 4, encodeALUr)
-	e.addInstruction("XOR", []OperandType{OperandRegister8}, 0xA8, 0x00, 4, encodeALUr)
-	e.addInstruction("OR", []OperandType{OperandRegister8}, 0xB0, 0x00, 4, encodeALUr)
-	e.addInstruction("CP", []OperandType{OperandRegister8}, 0xB8, 0x00, 4, encodeALUr)
+	e.addInstructionVarCycles("ADD", []OperandType{OperandRegister8, OperandRegister8}, 0x80, 0x00, aluRegCycles, encodeALUr)
+	e.addInstructionVarCycles("ADC", []OperandType{OperandRegister8, OperandRegister8}, 0x88, 0x00, aluRegCycles, encodeALUr)
+	e.addInstructionVarCycles("SUB", []OperandType{OperandRegister8}, 0x90, 0x00, aluRegCycles, encodeALUr)
+	e.addInstructionVarCycles("SBC", []OperandType{OperandRegister8, OperandRegister8}, 0x98, 0x00, aluRegCycles, encodeALUr)
+	e.addInstructionVarCycles("AND", []OperandType{OperandRegister8}, 0xA0, 0x00, aluRegCycles, encodeALUr)
+	e.addInstructionVarCycles("XOR", []OperandType{OperandRegister8}, 0xA8, 0x00, aluRegCycles, encodeALUr)
+	e.addInstructionVarCycles("OR", []OperandType{OperandRegister8}, 0xB0, 0x00, aluRegCycles, encodeALUr)
+	e.addInstructionVarCycles("CP", []OperandType{OperandRegister8}, 0xB8, 0x00, aluRegCycles, encodeALUr)
 
 	// ALU with immediate values
 	e.addInstruction("ADD", []OperandType{OperandRegister8, OperandImmediate8}, 0xC6, 0x00, 7, encodeALUn)
@@ -242,18 +463,18 @@ func (e *Encoder) initializeInstructions() {
 	// base; the indirect encoder ORs in reg code 6 and adds DD/FD + displacement
 	// for index registers. Two-operand forms (ADD/ADC/SBC A,(HL)) and one-operand
 	// forms (SUB/AND/XOR/OR/CP (HL)) are both registered.
-	e.addInstruction("ADD", []OperandType{OperandRegister8, OperandIndirect}, 0x80, 0x00, 7, encodeALUIndirect)
-	e.addInstruction("ADC", []OperandType{OperandRegister8, OperandIndirect}, 0x88, 0x00, 7, encodeALUIndirect)
-	e.addInstruction("SBC", []OperandType{OperandRegister8, OperandIndirect}, 0x98, 0x00, 7, encodeALUIndirect)
-	e.addInstruction("SUB", []OperandType{OperandIndirect}, 0x90, 0x00, 7, encodeALUIndirect)
-	e.addInstruction("AND", []OperandType{OperandIndirect}, 0xA0, 0x00, 7, encodeALUIndirect)
-	e.addInstruction("XOR", []OperandType{OperandIndirect}, 0xA8, 0x00, 7, encodeALUIndirect)
-	e.addInstruction("OR", []OperandType{OperandIndirect}, 0xB0, 0x00, 7, encodeALUIndirect)
-	e.addInstruction("CP", []OperandType{OperandIndirect}, 0xB8, 0x00, 7, encodeALUIndirect)
+	e.addInstructionVarCycles("ADD", []OperandType{OperandRegister8, OperandIndirect}, 0x80, 0x00, aluIndirectCycles, encodeALUIndirect)
+	e.addInstructionVarCycles("ADC", []OperandType{OperandRegister8, OperandIndirect}, 0x88, 0x00, aluIndirectCycles, encodeALUIndirect)
+	e.addInstructionVarCycles("SBC", []OperandType{OperandRegister8, OperandIndirect}, 0x98, 0x00, aluIndirectCycles, encodeALUIndirect)
+	e.addInstructionVarCycles("SUB", []OperandType{OperandIndirect}, 0x90, 0x00, aluIndirectCycles, encodeALUIndirect)
+	e.addInstructionVarCycles("AND", []OperandType{OperandIndirect}, 0xA0, 0x00, aluIndirectCycles, encodeALUIndirect)
+	e.addInstructionVarCycles("XOR", []OperandType{OperandIndirect}, 0xA8, 0x00, aluIndirectCycles, encodeALUIndirect)
+	e.addInstructionVarCycles("OR", []OperandType{OperandIndirect}, 0xB0, 0x00, aluIndirectCycles, encodeALUIndirect)
+	e.addInstructionVarCycles("CP", []OperandType{OperandIndirect}, 0xB8, 0x00, aluIndirectCycles, encodeALUIndirect)
 
 	// INC/DEC on (HL) / (IX+d) / (IY+d).
-	e.addInstruction("INC", []OperandType{OperandIndirect}, 0x34, 0x00, 11, encodeINCDECIndirect)
-	e.addInstruction("DEC", []OperandType{OperandIndirect}, 0x35, 0x00, 11, encodeINCDECIndirect)
+	e.addInstructionVarCycles("INC", []OperandType{OperandIndirect}, 0x34, 0x00, incDecIndirectCycles, encodeINCDECIndirect)
+	e.addInstructionVarCycles("DEC", []OperandType{OperandIndirect}, 0x35, 0x00, incDecIndirectCycles, encodeINCDECIndirect)
 
 	// Block 0: Miscellaneous (from executeBlock0)
 	e.addInstruction("NOP", []OperandType{}, 0x00, 0x00, 4, encodeSimple)
@@ -267,21 +488,31 @@ func (e *Encoder) initializeInstructions() {
 	e.addInstruction("EI", []OperandType{}, 0xFB, 0x00, 4, encodeSimple)
 	e.addInstruction("DI", []OperandType{}, 0xF3, 0x00, 4, encodeSimple)
 
-	e.addInstruction("INC", []OperandType{OperandRegister8}, 0x04, 0x00, 4, encodeINCr)
-	e.addInstruction("DEC", []OperandType{OperandRegister8}, 0x05, 0x00, 4, encodeDECr)
+	e.addInstructionVarCycles("INC", []OperandType{OperandRegister8}, 0x04, 0x00, incDecRegCycles, encodeINCr)
+	e.addInstructionVarCycles("DEC", []OperandType{OperandRegister8}, 0x05, 0x00, incDecRegCycles, encodeDECr)
 
-	// 16-bit operations
-	e.addInstruction("LD", []OperandType{OperandRegister16, OperandImmediate16}, 0x01, 0x00, 10, encodeLDrpnn)
-	e.addInstruction("LD", []OperandType{OperandRegister16, OperandIndirect}, 0x2A, 0x00, 16, encodeLDrpaddr)
-	e.addInstruction("LD", []OperandType{OperandIndirect, OperandRegister16}, 0x22, 0x00, 16, encodeLDaddrrp)
-	e.addInstruction("LD", []OperandType{OperandRegister16, OperandRegister16}, 0xF9, 0x00, 6, encodeLDSPHL)
-	e.addInstruction("ADD", []OperandType{OperandRegister16, OperandRegister16}, 0x09, 0x00, 11, encodeADDHLrp)
-	e.addInstruction("INC", []OperandType{OperandRegister16}, 0x03, 0x00, 6, encodeINCrp)
-	e.addInstruction("DEC", []OperandType{OperandRegister16}, 0x0B, 0x00, 6, encodeDECrp)
+	e.addInstructionVarCycles("ADD", []OperandType{OperandRegister16, OperandRegister16}, 0x09, 0x00, func(ops []*ResolvedOperand) int {
+		if isIndexReg16(ops[0].Register) {
+			return 15 // ADD IX,rr / ADD IY,rr
+		}
+		return 11 // ADD HL,rr
+	}, encodeADDHLrp)
+	e.addInstructionVarCycles("INC", []OperandType{OperandRegister16}, 0x03, 0x00, incDecRp16Cycles, encodeINCrp)
+	e.addInstructionVarCycles("DEC", []OperandType{OperandRegister16}, 0x0B, 0x00, incDecRp16Cycles, encodeDECrp)
 
 	// Stack operations (PUSH/POP) - ADDED
-	e.addInstruction("PUSH", []OperandType{OperandRegister16}, 0xC5, 0x00, 11, encodePUSHrp)
-	e.addInstruction("POP", []OperandType{OperandRegister16}, 0xC1, 0x00, 10, encodePOPrp)
+	e.addInstructionVarCycles("PUSH", []OperandType{OperandRegister16}, 0xC5, 0x00, func(ops []*ResolvedOperand) int {
+		if isIndexReg16(ops[0].Register) {
+			return 15 // PUSH IX/IY
+		}
+		return 11 // PUSH BC/DE/HL/AF
+	}, encodePUSHrp)
+	e.addInstructionVarCycles("POP", []OperandType{OperandRegister16}, 0xC1, 0x00, func(ops []*ResolvedOperand) int {
+		if isIndexReg16(ops[0].Register) {
+			return 14 // POP IX/IY
+		}
+		return 10 // POP BC/DE/HL/AF
+	}, encodePOPrp)
 
 	// Control flow (from executeBlock3)
 	e.addInstruction("JP", []OperandType{OperandImmediate16}, 0xC3, 0x00, 10, encodeJPnn)
@@ -292,10 +523,15 @@ func (e *Encoder) initializeInstructions() {
 	e.addInstruction("CALL", []OperandType{OperandImmediate16}, 0xCD, 0x00, 17, encodeCALLnn)
 	e.addInstruction("CALL", []OperandType{OperandCondition, OperandImmediate16}, 0xC4, 0x00, 17, encodeCALLccnn)
 	e.addInstruction("RET", []OperandType{}, 0xC9, 0x00, 10, encodeSimple)
-	e.addInstruction("RET", []OperandType{OperandCondition}, 0xC0, 0x00, 5, encodeRETcc)
+	e.addInstruction("RET", []OperandType{OperandCondition}, 0xC0, 0x00, 11, encodeRETcc) // taken; not-taken is 5, matching JR cc/CALL cc/DJNZ's own convention of reporting the longer case
 
 	// JP (HL) / JP (IX) / JP (IY) - register-indirect jump
-	e.addInstruction("JP", []OperandType{OperandIndirect}, 0xE9, 0x00, 4, encodeJPindirect)
+	e.addInstructionVarCycles("JP", []OperandType{OperandIndirect}, 0xE9, 0x00, func(ops []*ResolvedOperand) int {
+		if isIndexReg16(ops[0].Register) {
+			return 8 // JP (IX) / JP (IY)
+		}
+		return 4 // JP (HL)
+	}, encodeJPindirect)
 
 	// LD (IX+d),n / LD (IY+d),n - store immediate to indexed; the (HL) form is
 	// already registered above (encodeLDHLn), which now also handles IX/IY.
@@ -306,16 +542,34 @@ func (e *Encoder) initializeInstructions() {
 	// Block I/O (ED-prefixed, no operands)
 	e.addInstruction("INI", []OperandType{}, 0xA2, 0xED, 16, encodeSimple)
 	e.addInstruction("IND", []OperandType{}, 0xAA, 0xED, 16, encodeSimple)
-	e.addInstruction("INIR", []OperandType{}, 0xB2, 0xED, 16, encodeSimple)
-	e.addInstruction("INDR", []OperandType{}, 0xBA, 0xED, 16, encodeSimple)
+	e.addInstruction("INIR", []OperandType{}, 0xB2, 0xED, 21, encodeSimple) // repeat; last iteration is 16
+	e.addInstruction("INDR", []OperandType{}, 0xBA, 0xED, 21, encodeSimple) // repeat; last iteration is 16
 	e.addInstruction("OUTI", []OperandType{}, 0xA3, 0xED, 16, encodeSimple)
 	e.addInstruction("OUTD", []OperandType{}, 0xAB, 0xED, 16, encodeSimple)
-	e.addInstruction("OTIR", []OperandType{}, 0xB3, 0xED, 16, encodeSimple)
-	e.addInstruction("OTDR", []OperandType{}, 0xBB, 0xED, 16, encodeSimple)
+	e.addInstruction("OTIR", []OperandType{}, 0xB3, 0xED, 21, encodeSimple) // repeat; last iteration is 16
+	e.addInstruction("OTDR", []OperandType{}, 0xBB, 0xED, 21, encodeSimple) // repeat; last iteration is 16
 
 	// I/O instructions
-	e.addInstruction("OUT", []OperandType{OperandIndirect, OperandRegister8}, 0xD3, 0x00, 11, encodeOUTnA)
-	e.addInstruction("IN", []OperandType{OperandRegister8, OperandIndirect}, 0xDB, 0x00, 11, encodeINAn)
+	e.addInstructionVarCycles("OUT", []OperandType{OperandIndirect, OperandRegister8}, 0xD3, 0x00, func(ops []*ResolvedOperand) int {
+		if ops[0].Register == "C" {
+			return 12 // OUT (C),r
+		}
+		return 11 // OUT (n),A
+	}, encodeOUTnA)
+	e.addInstructionVarCycles("IN", []OperandType{OperandRegister8, OperandIndirect}, 0xDB, 0x00, func(ops []*ResolvedOperand) int {
+		if ops[1].Register == "C" {
+			return 12 // IN r,(C)
+		}
+		return 11 // IN A,(n)
+	}, encodeINAn)
+
+	// Undocumented ED70/ED71: bare IN (C) (reads the port, sets flags,
+	// discards the byte -- also widely known as "IN F,(C)", confirmed
+	// the same instruction under both names, not two different
+	// opcodes; only the register-less spelling is implemented here)
+	// and OUT (C),0 (outputs a literal zero, no source register).
+	e.addInstruction("IN", []OperandType{OperandIndirect}, 0x70, 0xED, 12, encodeINFC)
+	e.addInstruction("OUT", []OperandType{OperandIndirect, OperandImmediate8}, 0x71, 0xED, 12, encodeOUTC0)
 
 	// CB-prefixed instructions (from executeCB)
 	e.addInstruction("RLC", []OperandType{OperandRegister8}, 0x00, 0xCB, 8, encodeCBr)
@@ -325,30 +579,62 @@ func (e *Encoder) initializeInstructions() {
 	e.addInstruction("SLA", []OperandType{OperandRegister8}, 0x20, 0xCB, 8, encodeCBr)
 	e.addInstruction("SRA", []OperandType{OperandRegister8}, 0x28, 0xCB, 8, encodeCBr)
 	e.addInstruction("SRL", []OperandType{OperandRegister8}, 0x38, 0xCB, 8, encodeCBr)
+	// Undocumented 8th shift (CB 30-37), commonly called SLL, with SLI
+	// and SL1 as widely-recognised synonyms for the same opcode --
+	// confirmed "quite commonly used" despite never being officially
+	// documented. Shifts left like SLA, but sets bit 0 rather than
+	// clearing it.
+	e.addInstruction("SLL", []OperandType{OperandRegister8}, 0x30, 0xCB, 8, encodeCBr)
+	e.addInstruction("SLI", []OperandType{OperandRegister8}, 0x30, 0xCB, 8, encodeCBr)
+	e.addInstruction("SL1", []OperandType{OperandRegister8}, 0x30, 0xCB, 8, encodeCBr)
 	e.addInstruction("BIT", []OperandType{OperandImmediate8, OperandRegister8}, 0x40, 0xCB, 8, encodeBITbr)
 	e.addInstruction("RES", []OperandType{OperandImmediate8, OperandRegister8}, 0x80, 0xCB, 8, encodeRESbr)
 	e.addInstruction("SET", []OperandType{OperandImmediate8, OperandRegister8}, 0xC0, 0xCB, 8, encodeSETbr)
 
 	// CB-prefixed bit ops on (HL): reg code 6. base | (bit<<3) | 6
-	e.addInstruction("BIT", []OperandType{OperandImmediate8, OperandIndirect}, 0x40, 0xCB, 12, encodeCBbHL)
-	e.addInstruction("RES", []OperandType{OperandImmediate8, OperandIndirect}, 0x80, 0xCB, 15, encodeCBbHL)
-	e.addInstruction("SET", []OperandType{OperandImmediate8, OperandIndirect}, 0xC0, 0xCB, 15, encodeCBbHL)
+	e.addInstructionVarCycles("BIT", []OperandType{OperandImmediate8, OperandIndirect}, 0x40, 0xCB, cbBitIndirectCycles, encodeCBbHL)
+	e.addInstructionVarCycles("RES", []OperandType{OperandImmediate8, OperandIndirect}, 0x80, 0xCB, cbIndirectCycles, encodeCBbHL)
+	e.addInstructionVarCycles("SET", []OperandType{OperandImmediate8, OperandIndirect}, 0xC0, 0xCB, cbIndirectCycles, encodeCBbHL)
 	// CB-prefixed rotates/shifts on (HL): base | 6
-	e.addInstruction("RLC", []OperandType{OperandIndirect}, 0x00, 0xCB, 15, encodeCBHL)
-	e.addInstruction("RRC", []OperandType{OperandIndirect}, 0x08, 0xCB, 15, encodeCBHL)
-	e.addInstruction("RL", []OperandType{OperandIndirect}, 0x10, 0xCB, 15, encodeCBHL)
-	e.addInstruction("RR", []OperandType{OperandIndirect}, 0x18, 0xCB, 15, encodeCBHL)
-	e.addInstruction("SLA", []OperandType{OperandIndirect}, 0x20, 0xCB, 15, encodeCBHL)
-	e.addInstruction("SRA", []OperandType{OperandIndirect}, 0x28, 0xCB, 15, encodeCBHL)
-	e.addInstruction("SRL", []OperandType{OperandIndirect}, 0x38, 0xCB, 15, encodeCBHL)
+	e.addInstructionVarCycles("RLC", []OperandType{OperandIndirect}, 0x00, 0xCB, cbIndirectCycles, encodeCBHL)
+	e.addInstructionVarCycles("RRC", []OperandType{OperandIndirect}, 0x08, 0xCB, cbIndirectCycles, encodeCBHL)
+	e.addInstructionVarCycles("RL", []OperandType{OperandIndirect}, 0x10, 0xCB, cbIndirectCycles, encodeCBHL)
+	e.addInstructionVarCycles("RR", []OperandType{OperandIndirect}, 0x18, 0xCB, cbIndirectCycles, encodeCBHL)
+	e.addInstructionVarCycles("SLA", []OperandType{OperandIndirect}, 0x20, 0xCB, cbIndirectCycles, encodeCBHL)
+	e.addInstructionVarCycles("SRA", []OperandType{OperandIndirect}, 0x28, 0xCB, cbIndirectCycles, encodeCBHL)
+	e.addInstructionVarCycles("SRL", []OperandType{OperandIndirect}, 0x38, 0xCB, cbIndirectCycles, encodeCBHL)
+	// SLL/SLI/SL1 on (HL)/(IX+d)/(IY+d): encodeCBHL already handles all
+	// three via the switch added for the DDCB/FDCB fix, so no new
+	// encode function is needed here either.
+	e.addInstructionVarCycles("SLL", []OperandType{OperandIndirect}, 0x30, 0xCB, cbIndirectCycles, encodeCBHL)
+	e.addInstructionVarCycles("SLI", []OperandType{OperandIndirect}, 0x30, 0xCB, cbIndirectCycles, encodeCBHL)
+	e.addInstructionVarCycles("SL1", []OperandType{OperandIndirect}, 0x30, 0xCB, cbIndirectCycles, encodeCBHL)
+
+	// DDCB/FDCB undocumented copy-to-register forms. Conventional
+	// syntax "RLC (IX+d),B" / "SET n,(IX+d),B" (confirmed against GNU
+	// as's own documented "op (ix+d), r" convention). BIT has no
+	// equivalent (see encodeDDFDCBbCopy's own comment) and is
+	// deliberately not registered here.
+	e.addInstruction("RLC", []OperandType{OperandIndirect, OperandRegister8}, 0x00, 0xCB, 23, encodeDDFDCBCopy)
+	e.addInstruction("RRC", []OperandType{OperandIndirect, OperandRegister8}, 0x08, 0xCB, 23, encodeDDFDCBCopy)
+	e.addInstruction("RL", []OperandType{OperandIndirect, OperandRegister8}, 0x10, 0xCB, 23, encodeDDFDCBCopy)
+	e.addInstruction("RR", []OperandType{OperandIndirect, OperandRegister8}, 0x18, 0xCB, 23, encodeDDFDCBCopy)
+	e.addInstruction("SLA", []OperandType{OperandIndirect, OperandRegister8}, 0x20, 0xCB, 23, encodeDDFDCBCopy)
+	e.addInstruction("SRA", []OperandType{OperandIndirect, OperandRegister8}, 0x28, 0xCB, 23, encodeDDFDCBCopy)
+	e.addInstruction("SLL", []OperandType{OperandIndirect, OperandRegister8}, 0x30, 0xCB, 23, encodeDDFDCBCopy)
+	e.addInstruction("SLI", []OperandType{OperandIndirect, OperandRegister8}, 0x30, 0xCB, 23, encodeDDFDCBCopy)
+	e.addInstruction("SL1", []OperandType{OperandIndirect, OperandRegister8}, 0x30, 0xCB, 23, encodeDDFDCBCopy)
+	e.addInstruction("SRL", []OperandType{OperandIndirect, OperandRegister8}, 0x38, 0xCB, 23, encodeDDFDCBCopy)
+	e.addInstruction("RES", []OperandType{OperandImmediate8, OperandIndirect, OperandRegister8}, 0x80, 0xCB, 23, encodeDDFDCBbCopy)
+	e.addInstruction("SET", []OperandType{OperandImmediate8, OperandIndirect, OperandRegister8}, 0xC0, 0xCB, 23, encodeDDFDCBbCopy)
 
 	// Block transfer / search (ED-prefixed, no operands)
-	e.addInstruction("LDIR", []OperandType{}, 0xB0, 0xED, 16, encodeSimple)
-	e.addInstruction("LDDR", []OperandType{}, 0xB8, 0xED, 16, encodeSimple)
+	e.addInstruction("LDIR", []OperandType{}, 0xB0, 0xED, 21, encodeSimple) // repeat; last iteration is 16
+	e.addInstruction("LDDR", []OperandType{}, 0xB8, 0xED, 21, encodeSimple) // repeat; last iteration is 16
 	e.addInstruction("LDI", []OperandType{}, 0xA0, 0xED, 16, encodeSimple)
 	e.addInstruction("LDD", []OperandType{}, 0xA8, 0xED, 16, encodeSimple)
-	e.addInstruction("CPIR", []OperandType{}, 0xB1, 0xED, 16, encodeSimple)
-	e.addInstruction("CPDR", []OperandType{}, 0xB9, 0xED, 16, encodeSimple)
+	e.addInstruction("CPIR", []OperandType{}, 0xB1, 0xED, 21, encodeSimple) // repeat; last iteration is 16
+	e.addInstruction("CPDR", []OperandType{}, 0xB9, 0xED, 21, encodeSimple) // repeat; last iteration is 16
 	e.addInstruction("CPI", []OperandType{}, 0xA1, 0xED, 16, encodeSimple)
 	e.addInstruction("CPD", []OperandType{}, 0xA9, 0xED, 16, encodeSimple)
 
@@ -374,7 +660,12 @@ func (e *Encoder) initializeInstructions() {
 
 	// EX DE,HL / EX AF,AF' / EX (SP),HL
 	e.addInstruction("EX", []OperandType{OperandRegister16, OperandRegister16}, 0x00, 0x00, 4, encodeEX)
-	e.addInstruction("EX", []OperandType{OperandIndirect, OperandRegister16}, 0xE3, 0x00, 19, encodeEXSPHL)
+	e.addInstructionVarCycles("EX", []OperandType{OperandIndirect, OperandRegister16}, 0xE3, 0x00, func(ops []*ResolvedOperand) int {
+		if isIndexReg16(ops[1].Register) {
+			return 23 // EX (SP),IX / EX (SP),IY
+		}
+		return 19 // EX (SP),HL
+	}, encodeEXSPHL)
 
 	// IM 0/1/2 (ED-prefixed)
 	e.addInstruction("IM", []OperandType{OperandImmediate8}, 0x46, 0xED, 8, encodeIM)
@@ -397,50 +688,43 @@ func (e *Encoder) addInstruction(mnemonic string, operandTypes []OperandType, ba
 	e.instructions[mnemonic] = append(e.instructions[mnemonic], template)
 }
 
+// addInstructionVarCycles registers a template whose true T-state count
+// depends on which specific register the resolved operands use (e.g.
+// (HL) vs (IX+d)/(IY+d)) -- cyclesFunc computes it from the actual
+// operands; Cycles itself is left at 0 and must not be read directly
+// for these templates (use CyclesFor).
+func (e *Encoder) addInstructionVarCycles(mnemonic string, operandTypes []OperandType, baseOpcode, prefix uint8, cyclesFunc func([]*ResolvedOperand) int, encodeFunc func(*InstructionTemplate, []*ResolvedOperand) ([]uint8, error)) {
+	template := &InstructionTemplate{
+		Mnemonic:     mnemonic,
+		OperandTypes: operandTypes,
+		Encode:       encodeFunc,
+		BaseOpcode:   baseOpcode,
+		Prefix:       prefix,
+		CyclesFunc:   cyclesFunc,
+	}
+
+	e.instructions[mnemonic] = append(e.instructions[mnemonic], template)
+}
+
 // Encoding functions - these mirror the zen80 emulator's decoding patterns
 
 // encodeSimple encodes instructions with no operands
 func encodeSimple(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	if template.Prefix != 0 {
-		return []uint8{template.Prefix, template.BaseOpcode}, nil
-	}
-	return []uint8{template.BaseOpcode}, nil
+	return z80enc.EncodeSimple(template.Prefix, template.BaseOpcode), nil
 }
 
 // encodeLDrr encodes LD r,r' - mirrors executeBlock1 pattern 01yyyzzz
 func encodeLDrr(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	d, s := operands[0].Register, operands[1].Register
-
-	// Interrupt-vector (I) and memory-refresh (R) register transfers are
-	// ED-prefixed special cases: LD A,I / LD A,R / LD I,A / LD R,A. They are the
-	// only valid uses of I and R as 8-bit operands.
-	switch {
-	case d == "A" && s == "I":
-		return []uint8{0xED, 0x57}, nil
-	case d == "A" && s == "R":
-		return []uint8{0xED, 0x5F}, nil
-	case d == "I" && s == "A":
-		return []uint8{0xED, 0x47}, nil
-	case d == "R" && s == "A":
-		return []uint8{0xED, 0x4F}, nil
+	b, err := z80enc.EncodeLDrr(operands[0].Register, operands[1].Register)
+	if err != nil {
+		return nil, err
 	}
-	if d == "I" || d == "R" || s == "I" || s == "R" {
-		return nil, fmt.Errorf("registers I and R may only be used as LD A,I / LD A,R / LD I,A / LD R,A")
-	}
-
-	dst := register8Map[d]
-	src := register8Map[s]
-	opcode := 0x40 | (dst << 3) | src
-	return []uint8{opcode}, nil
+	return b, nil
 }
 
 // encodeLDrn encodes LD r,n - mirrors executeBlock0 pattern 00yyy110
 func encodeLDrn(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	reg := register8Map[operands[0].Register]
-	value := uint8(operands[1].Value)
-
-	opcode := 0x06 | (reg << 3)
-	return []uint8{opcode, value}, nil
+	return z80enc.EncodeReg8Imm(0x06, operands[0].Register, uint8(operands[1].Value))
 }
 
 // encodeLDrHL encodes LD r,(HL) - mirrors executeBlock1 pattern 01yyy110
@@ -448,35 +732,7 @@ func encodeLDrHL(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 	if operands[1].Type != OperandIndirect {
 		return nil, fmt.Errorf("expected indirect operand as source")
 	}
-
-	// Handle different indirect addressing modes
-	if operands[1].Register == "HL" {
-		// LD r,(HL)
-		reg := register8Map[operands[0].Register]
-		opcode := 0x46 | (reg << 3)
-		return []uint8{opcode}, nil
-	} else if operands[1].Register == "BC" && operands[0].Register == "A" {
-		// LD A,(BC)
-		return []uint8{0x0A}, nil
-	} else if operands[1].Register == "DE" && operands[0].Register == "A" {
-		// LD A,(DE)
-		return []uint8{0x1A}, nil
-	} else if operands[1].Register == "" {
-		// LD A,(nn) - absolute address (no register means it's an address)
-		if operands[0].Register != "A" {
-			return nil, fmt.Errorf("only LD A,(nn) supported for absolute addressing")
-		}
-		addr := uint16(operands[1].Value)
-		return []uint8{0x3A, uint8(addr), uint8(addr >> 8)}, nil
-	} else if operands[1].Register == "IX" || operands[1].Register == "IY" {
-		// LD r,(IX+d) / LD r,(IY+d): DD/FD prefix + (HL)-form opcode + displacement
-		prefix := indexPrefix(operands[1].Register)
-		reg := register8Map[operands[0].Register]
-		opcode := 0x46 | (reg << 3)
-		return []uint8{prefix, opcode, byte(int8(operands[1].Displacement))}, nil
-	}
-
-	return nil, fmt.Errorf("unsupported indirect addressing mode: (%s)", operands[1].Register)
+	return z80enc.EncodeLDRegFromIndirect(operands[0].Register, operands[1].Register, uint16(operands[1].Value), int8(operands[1].Displacement))
 }
 
 // indexPrefix returns the DD/FD prefix byte for an IX/IY indexed operand.
@@ -485,6 +741,51 @@ func indexPrefix(reg string) uint8 {
 		return 0xFD
 	}
 	return 0xDD
+}
+
+// encodeDDFDCBCopy encodes the undocumented DDCB/FDCB copy-to-register
+// rotate/shift forms: DD/FD, 0xCB, displacement, base|reg. Confirmed
+// real, "quite commonly used" behaviour, not a theoretical opcode
+// (multiple independent sources agree): the operation is performed on
+// the indexed memory operand exactly as the documented (IX+d) form
+// does, and the same result is *also* stored in the named register --
+// equivalent to the operation followed by LD r,(IX+d). Conventional
+// syntax confirmed against GNU as's own documentation: "op (ix+d), r".
+// The actual byte arithmetic lives in pkg/z80enc (shareable, primitive-
+// typed) -- this is a thin adapter extracting plain strings/ints from
+// zenas's own ResolvedOperand.
+func encodeDDFDCBCopy(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
+	ind := operands[0]
+	b, err := z80enc.EncodeDDFDCBCopy(template.BaseOpcode, ind.Register, int8(ind.Displacement), operands[1].Register)
+	if err != nil {
+		if ind.Register != "IX" && ind.Register != "IY" {
+			return nil, fmt.Errorf("expected (IX+d) or (IY+d)")
+		}
+		return nil, fmt.Errorf("%s: %w", template.Mnemonic, err)
+	}
+	return b, nil
+}
+
+// encodeDDFDCBbCopy encodes the undocumented DDCB/FDCB copy-to-register
+// RES/SET forms: DD/FD, 0xCB, displacement, base|(bit<<3)|reg. BIT has
+// no equivalent and is deliberately not registered with this function:
+// confirmed (multiple independent sources) that all 8 register-field
+// values of a DDCB/FDCB BIT instruction are identical, since BIT never
+// writes a result anywhere but the flags -- there is nothing to copy.
+func encodeDDFDCBbCopy(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
+	bit := uint8(operands[0].Value)
+	ind := operands[1]
+	b, err := z80enc.EncodeDDFDCBBitCopy(template.BaseOpcode, bit, ind.Register, int8(ind.Displacement), operands[2].Register)
+	if err != nil {
+		if bit > 7 {
+			return nil, fmt.Errorf("bit number must be 0-7")
+		}
+		if ind.Register != "IX" && ind.Register != "IY" {
+			return nil, fmt.Errorf("expected (IX+d) or (IY+d)")
+		}
+		return nil, fmt.Errorf("%s: %w", template.Mnemonic, err)
+	}
+	return b, nil
 }
 
 // applyHalfIndexPrefix prepends the DD/FD prefix for the undocumented half-index
@@ -502,107 +803,50 @@ func indexPrefix(reg string) uint8 {
 // Both illegal cases are rejected rather than silently producing a different
 // instruction.
 func applyHalfIndexPrefix(code []uint8, operands []*ResolvedOperand) ([]uint8, error) {
-	var prefix uint8
-	var sawHalf, sawIndexedMem bool
+	var reg8Regs, indirectRegs []string
 	for _, op := range operands {
-		if op.Type == OperandIndirect && (op.Register == "IX" || op.Register == "IY") {
-			sawIndexedMem = true
-			continue
+		switch op.Type {
+		case OperandIndirect:
+			indirectRegs = append(indirectRegs, op.Register)
+		case OperandRegister8:
+			reg8Regs = append(reg8Regs, op.Register)
 		}
-		if op.Type != OperandRegister8 {
-			continue
-		}
-		var p uint8
-		switch op.Register {
-		case "IXH", "IXL":
-			p = 0xDD
-		case "IYH", "IYL":
-			p = 0xFD
-		default:
-			continue
-		}
-		if prefix != 0 && prefix != p {
-			return nil, fmt.Errorf("cannot mix IX and IY half registers in one instruction")
-		}
-		prefix = p
-		sawHalf = true
 	}
-	if prefix == 0 {
-		return code, nil
-	}
-	if sawHalf && sawIndexedMem {
-		return nil, fmt.Errorf("cannot combine an index half register with an (IX+d)/(IY+d) operand")
-	}
-	if len(code) > 0 && (code[0] == 0xDD || code[0] == 0xFD) {
-		return code, nil // already prefixed (the indexed-operand encoder added it)
-	}
-	return append([]uint8{prefix}, code...), nil
+	return z80enc.ApplyHalfIndexPrefix(code, reg8Regs, indirectRegs)
 }
 func encodeLDHLr(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
 	if operands[0].Type != OperandIndirect {
 		return nil, fmt.Errorf("expected indirect operand as destination")
 	}
-
-	// Handle different indirect addressing modes
-	if operands[0].Register == "HL" {
-		// LD (HL),r
-		reg := register8Map[operands[1].Register]
-		opcode := 0x70 | reg
-		return []uint8{opcode}, nil
-	} else if operands[0].Register == "BC" && operands[1].Register == "A" {
-		// LD (BC),A
-		return []uint8{0x02}, nil
-	} else if operands[0].Register == "DE" && operands[1].Register == "A" {
-		// LD (DE),A
-		return []uint8{0x12}, nil
-	} else if operands[0].Register == "" {
-		// LD (nn),A - absolute address (no register means it's an address)
-		if operands[1].Register != "A" {
-			return nil, fmt.Errorf("only LD (nn),A supported for absolute addressing")
-		}
-		addr := uint16(operands[0].Value)
-		return []uint8{0x32, uint8(addr), uint8(addr >> 8)}, nil
-	} else if operands[0].Register == "IX" || operands[0].Register == "IY" {
-		// LD (IX+d),r / LD (IY+d),r: DD/FD prefix + (HL)-form opcode + displacement
-		prefix := indexPrefix(operands[0].Register)
-		reg := register8Map[operands[1].Register]
-		opcode := 0x70 | reg
-		return []uint8{prefix, opcode, byte(int8(operands[0].Displacement))}, nil
-	}
-
-	return nil, fmt.Errorf("unsupported indirect addressing mode: (%s)", operands[0].Register)
+	return z80enc.EncodeLDIndirectFromReg(operands[0].Register, uint16(operands[0].Value), operands[1].Register, int8(operands[0].Displacement))
 }
 func encodeLDHLn(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
 	dst := operands[0]
-	value := uint8(operands[1].Value)
-	switch dst.Register {
-	case "HL":
-		return []uint8{0x36, value}, nil
-	case "IX", "IY":
-		return []uint8{indexPrefix(dst.Register), 0x36, byte(int8(dst.Displacement)), value}, nil
+	b, err := z80enc.EncodeIndirectImm8(dst.Register, int8(dst.Displacement), uint8(operands[1].Value))
+	if err != nil {
+		return nil, fmt.Errorf("expected (HL), (IX+d), or (IY+d) as destination")
 	}
-	return nil, fmt.Errorf("expected (HL), (IX+d), or (IY+d) as destination")
+	return b, nil
 }
 
 // encodeALUr encodes ALU operations with register - mirrors executeBlock2 pattern 10yyyzzz
 func encodeALUr(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	var reg uint8
+	var reg string
 
 	if len(operands) == 1 {
 		// SUB r, AND r, XOR r, OR r, CP r
-		reg = register8Map[operands[0].Register]
+		reg = operands[0].Register
 	} else if len(operands) == 2 {
 		// ADD A,r; ADC A,r; SBC A,r
 		if operands[0].Register != "A" {
 			return nil, fmt.Errorf("first operand must be A for %s", template.Mnemonic)
 		}
-		reg = register8Map[operands[1].Register]
+		reg = operands[1].Register
 	} else {
 		return nil, fmt.Errorf("invalid number of operands for ALU instruction")
 	}
 
-	opcode := template.BaseOpcode | reg
-	return []uint8{opcode}, nil
+	return z80enc.EncodeReg8(template.BaseOpcode, reg)
 }
 
 // encodeALUn encodes ALU operations with immediate value
@@ -622,7 +866,7 @@ func encodeALUn(template *InstructionTemplate, operands []*ResolvedOperand) ([]u
 		return nil, fmt.Errorf("invalid number of operands for ALU instruction")
 	}
 
-	return []uint8{template.BaseOpcode, value}, nil
+	return z80enc.EncodeImm8(template.BaseOpcode, value), nil
 }
 
 // encodeALUIndirect encodes ALU ops on (HL)/(IX+d)/(IY+d). The indirect operand
@@ -636,14 +880,11 @@ func encodeALUIndirect(template *InstructionTemplate, operands []*ResolvedOperan
 	if len(operands) == 2 && operands[0].Register != "A" {
 		return nil, fmt.Errorf("first operand must be A for %s", template.Mnemonic)
 	}
-	opcode := template.BaseOpcode | 6
-	switch ind.Register {
-	case "HL":
-		return []uint8{opcode}, nil
-	case "IX", "IY":
-		return []uint8{indexPrefix(ind.Register), opcode, byte(int8(ind.Displacement))}, nil
+	b, err := z80enc.EncodeIndirectByte(template.BaseOpcode|6, ind.Register, int8(ind.Displacement))
+	if err != nil {
+		return nil, fmt.Errorf("unsupported indirect operand for %s: (%s)", template.Mnemonic, ind.Register)
 	}
-	return nil, fmt.Errorf("unsupported indirect operand for %s: (%s)", template.Mnemonic, ind.Register)
+	return b, nil
 }
 
 // encodeINCDECIndirect encodes INC/DEC on (HL)/(IX+d)/(IY+d).
@@ -652,165 +893,77 @@ func encodeINCDECIndirect(template *InstructionTemplate, operands []*ResolvedOpe
 	if ind.Type != OperandIndirect {
 		return nil, fmt.Errorf("expected indirect operand for %s", template.Mnemonic)
 	}
-	switch ind.Register {
-	case "HL":
-		return []uint8{template.BaseOpcode}, nil
-	case "IX", "IY":
-		return []uint8{indexPrefix(ind.Register), template.BaseOpcode, byte(int8(ind.Displacement))}, nil
+	b, err := z80enc.EncodeIndirectByte(template.BaseOpcode, ind.Register, int8(ind.Displacement))
+	if err != nil {
+		return nil, fmt.Errorf("unsupported indirect operand for %s: (%s)", template.Mnemonic, ind.Register)
 	}
-	return nil, fmt.Errorf("unsupported indirect operand for %s: (%s)", template.Mnemonic, ind.Register)
+	return b, nil
 }
 
 // encodeINCr encodes INC r - mirrors executeBlock0 pattern 00yyy100
 func encodeINCr(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	reg := register8Map[operands[0].Register]
-	opcode := 0x04 | (reg << 3)
-	return []uint8{opcode}, nil
+	return z80enc.EncodeReg8Shift3(0x04, operands[0].Register)
 }
 
 // encodeDECr encodes DEC r - mirrors executeBlock0 pattern 00yyy101
 func encodeDECr(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	reg := register8Map[operands[0].Register]
-	opcode := 0x05 | (reg << 3)
-	return []uint8{opcode}, nil
+	return z80enc.EncodeReg8Shift3(0x05, operands[0].Register)
 }
 
 // encodeLDrpnn encodes LD rp,nn - mirrors executeBlock0 pattern 00pp0001
 func encodeLDrpnn(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	dst := operands[0].Register
-	value := uint16(operands[1].Value)
-	rp := register16Map[dst]
-	opcode := 0x01 | (rp << 4)
-	if dst == "IX" || dst == "IY" {
-		// LD IX,nn / LD IY,nn: DD/FD prefix + the LD HL,nn opcode (0x21).
-		return []uint8{indexPrefix(dst), opcode, uint8(value), uint8(value >> 8)}, nil
-	}
-	return []uint8{opcode, uint8(value), uint8(value >> 8)}, nil
+	return z80enc.EncodeRp16Imm(0x01, operands[0].Register, uint16(operands[1].Value))
 }
 
 // encodeADDHLrp encodes ADD HL,rp - mirrors executeBlock0 pattern 00pp1001
 func encodeADDHLrp(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	dst := operands[0].Register
-	if dst != "HL" && dst != "IX" && dst != "IY" {
-		return nil, fmt.Errorf("first operand must be HL, IX, or IY")
-	}
-	src := operands[1].Register
-	if dst == "IX" || dst == "IY" {
-		// ADD IX,rp: DD/FD prefix + 0x09|(p<<4). The source pair uses HL's code
-		// (2) when it is the index register itself (ADD IX,IX), otherwise its
-		// normal code. Real-world source uses ADD IX,BC/DE/SP.
-		var rp uint8
-		if src == dst {
-			rp = 2
-		} else if src == "IX" || src == "IY" {
-			return nil, fmt.Errorf("cannot mix IX and IY in ADD")
-		} else {
-			rp = register16Map[src]
-		}
-		return []uint8{indexPrefix(dst), 0x09 | (rp << 4)}, nil
-	}
-	rp := register16Map[src]
-	return []uint8{0x09 | (rp << 4)}, nil
+	return z80enc.EncodeADDHLrp(operands[0].Register, operands[1].Register)
 }
 
 // encodeINCrp encodes INC rp - mirrors executeBlock0 pattern 00pp0011
 func encodeINCrp(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	r := operands[0].Register
-	rp := register16Map[r]
-	if r == "IX" || r == "IY" {
-		return []uint8{indexPrefix(r), 0x03 | (rp << 4)}, nil
-	}
-	opcode := 0x03 | (rp << 4)
-	return []uint8{opcode}, nil
+	return z80enc.EncodeRp16Shift4(0x03, operands[0].Register)
 }
 
 // encodeDECrp encodes DEC rp - mirrors executeBlock0 pattern 00pp1011
 func encodeDECrp(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	r := operands[0].Register
-	rp := register16Map[r]
-	if r == "IX" || r == "IY" {
-		return []uint8{indexPrefix(r), 0x0B | (rp << 4)}, nil
-	}
-	opcode := 0x0B | (rp << 4)
-	return []uint8{opcode}, nil
+	return z80enc.EncodeRp16Shift4(0x0B, operands[0].Register)
 }
 
 // encodePUSHrp encodes PUSH rp - mirrors executeBlock0 pattern 11pp0101 (ADDED)
 func encodePUSHrp(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	if r := operands[0].Register; r == "IX" || r == "IY" {
-		return []uint8{indexPrefix(r), 0xE5}, nil
-	}
-	rp, exists := stackRegisterMap[operands[0].Register]
-	if !exists {
+	b, err := z80enc.EncodeStackOp(0xC5, operands[0].Register)
+	if err != nil {
 		return nil, fmt.Errorf("invalid register for PUSH: %s", operands[0].Register)
 	}
-
-	opcode := 0xC5 | (rp << 4)
-	return []uint8{opcode}, nil
+	return b, nil
 }
 
 // encodePOPrp encodes POP rp - mirrors executeBlock0 pattern 11pp0001 (ADDED)
 func encodePOPrp(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	if r := operands[0].Register; r == "IX" || r == "IY" {
-		return []uint8{indexPrefix(r), 0xE1}, nil
-	}
-	rp, exists := stackRegisterMap[operands[0].Register]
-	if !exists {
+	b, err := z80enc.EncodeStackOp(0xC1, operands[0].Register)
+	if err != nil {
 		return nil, fmt.Errorf("invalid register for POP: %s", operands[0].Register)
 	}
-
-	opcode := 0xC1 | (rp << 4)
-	return []uint8{opcode}, nil
+	return b, nil
 }
 
 // encodeLDrpaddr encodes LD rp,(nn) - load 16-bit register from memory
 func encodeLDrpaddr(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	reg := operands[0].Register
-	addr := uint16(operands[1].Value)
-
-	if reg == "HL" {
-		// LD HL,(nn) - 0x2A
-		return []uint8{0x2A, uint8(addr), uint8(addr >> 8)}, nil
-	} else {
-		// LD BC,(nn), LD DE,(nn), LD SP,(nn) - need ED prefix
-		var subOpcode uint8
-		switch reg {
-		case "BC":
-			subOpcode = 0x4B
-		case "DE":
-			subOpcode = 0x5B
-		case "SP":
-			subOpcode = 0x7B
-		default:
-			return nil, fmt.Errorf("unsupported register for LD rp,(nn): %s", reg)
-		}
-		return []uint8{0xED, subOpcode, uint8(addr), uint8(addr >> 8)}, nil
+	b, err := z80enc.EncodeLDrpAddr(operands[0].Register, uint16(operands[1].Value))
+	if err != nil {
+		return nil, fmt.Errorf("unsupported register for LD rp,(nn): %s", operands[0].Register)
 	}
+	return b, nil
 }
 
 // encodeLDaddrrp encodes LD (nn),rp - store 16-bit register to memory
 func encodeLDaddrrp(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	addr := uint16(operands[0].Value)
-	reg := operands[1].Register
-
-	if reg == "HL" {
-		// LD (nn),HL - 0x22
-		return []uint8{0x22, uint8(addr), uint8(addr >> 8)}, nil
-	} else {
-		// LD (nn),BC, LD (nn),DE, LD (nn),SP - need ED prefix
-		var subOpcode uint8
-		switch reg {
-		case "BC":
-			subOpcode = 0x43
-		case "DE":
-			subOpcode = 0x53
-		case "SP":
-			subOpcode = 0x73
-		default:
-			return nil, fmt.Errorf("unsupported register for LD (nn),rp: %s", reg)
-		}
-		return []uint8{0xED, subOpcode, uint8(addr), uint8(addr >> 8)}, nil
+	b, err := z80enc.EncodeLDAddrRp(operands[1].Register, uint16(operands[0].Value))
+	if err != nil {
+		return nil, fmt.Errorf("unsupported register for LD (nn),rp: %s", operands[1].Register)
 	}
+	return b, nil
 }
 
 // encodeLDSPHL encodes LD SP,HL - special case for loading SP from HL
@@ -818,20 +971,12 @@ func encodeLDSPHL(template *InstructionTemplate, operands []*ResolvedOperand) ([
 	if operands[0].Register != "SP" {
 		return nil, fmt.Errorf("LD rp,rp only supports SP as destination here")
 	}
-	switch operands[1].Register {
-	case "HL":
-		return []uint8{0xF9}, nil
-	case "IX", "IY":
-		// LD SP,IX / LD SP,IY
-		return []uint8{indexPrefix(operands[1].Register), 0xF9}, nil
-	}
-	return nil, fmt.Errorf("unsupported LD SP,%s", operands[1].Register)
+	return z80enc.EncodeLDSPHL(operands[1].Register)
 }
 
 // encodeJPnn encodes JP nn
 func encodeJPnn(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	addr := uint16(operands[0].Value)
-	return []uint8{0xC3, uint8(addr), uint8(addr >> 8)}, nil
+	return z80enc.EncodeAddr16(0xC3, uint16(operands[0].Value)), nil
 }
 
 // encodeJPccnn encodes JP cc,nn - mirrors executeBlock3 pattern 11ccc010
@@ -844,102 +989,81 @@ func encodeJPccnn(template *InstructionTemplate, operands []*ResolvedOperand) ([
 		return nil, fmt.Errorf("first operand must be a condition code")
 	}
 
-	cc := conditionMap[operands[0].Condition]
-	addr := uint16(operands[1].Value)
-
-	opcode := 0xC2 | (cc << 3)
-	return []uint8{opcode, uint8(addr), uint8(addr >> 8)}, nil
+	return z80enc.EncodeCondAddr16(0xC2, operands[0].Condition, uint16(operands[1].Value))
 }
 
 // encodeJRd encodes JR d
 func encodeJRd(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	disp := int8(operands[0].Value)
-	return []uint8{0x18, uint8(disp)}, nil
+	return z80enc.EncodeRelBranch(0x18, int8(operands[0].Value)), nil
 }
 
 // encodeJRccd encodes JR cc,d - mirrors executeBlock0 pattern 001cc000
 func encodeJRccd(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	// JR only supports NZ, Z, NC, C conditions
-	condMap := map[string]uint8{"NZ": 0, "Z": 1, "NC": 2, "C": 3}
-	cc, exists := condMap[operands[0].Condition]
-	if !exists {
+	b, err := z80enc.EncodeCondRelBranch(0x20, operands[0].Condition, int8(operands[1].Value))
+	if err != nil {
 		return nil, fmt.Errorf("invalid condition for JR: %s", operands[0].Condition)
 	}
-
-	disp := int8(operands[1].Value)
-	opcode := 0x20 | (cc << 3)
-	return []uint8{opcode, uint8(disp)}, nil
+	return b, nil
 }
 
 // encodeDJNZ encodes DJNZ d - decrement B and jump if not zero
 func encodeDJNZ(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	disp := int8(operands[0].Value)
-	return []uint8{0x10, uint8(disp)}, nil
+	return z80enc.EncodeRelBranch(0x10, int8(operands[0].Value)), nil
 }
 
 // encodeCALLnn encodes CALL nn
 func encodeCALLnn(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	addr := uint16(operands[0].Value)
-	return []uint8{0xCD, uint8(addr), uint8(addr >> 8)}, nil
+	return z80enc.EncodeAddr16(0xCD, uint16(operands[0].Value)), nil
 }
 
 // encodeCALLccnn encodes CALL cc,nn - 11ccc100
 func encodeCALLccnn(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	cc := conditionMap[operands[0].Condition]
-	addr := uint16(operands[1].Value)
-	opcode := 0xC4 | (cc << 3)
-	return []uint8{opcode, uint8(addr), uint8(addr >> 8)}, nil
+	return z80enc.EncodeCondAddr16(0xC4, operands[0].Condition, uint16(operands[1].Value))
 }
 
 // encodeJPindirect encodes JP (HL) / JP (IX) / JP (IY)
 func encodeJPindirect(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	switch operands[0].Register {
-	case "HL":
-		return []uint8{0xE9}, nil
-	case "IX", "IY":
-		return []uint8{indexPrefix(operands[0].Register), 0xE9}, nil
+	b, err := z80enc.EncodeJPIndirect(operands[0].Register)
+	if err != nil {
+		return nil, fmt.Errorf("JP only supports (HL), (IX), (IY) as indirect targets")
 	}
-	return nil, fmt.Errorf("JP only supports (HL), (IX), (IY) as indirect targets")
+	return b, nil
 }
 
 // encodeRETcc encodes RET cc - mirrors executeBlock3 pattern 11ccc000
 func encodeRETcc(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	cc := conditionMap[operands[0].Condition]
-	opcode := 0xC0 | (cc << 3)
-	return []uint8{opcode}, nil
+	return z80enc.EncodeCondOnly(0xC0, operands[0].Condition)
 }
 
 // CB-prefixed instruction encoders
 
 // encodeCBr encodes CB r instructions
 func encodeCBr(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	reg := register8Map[operands[0].Register]
-	cbOpcode := template.BaseOpcode | reg
-	return []uint8{0xCB, cbOpcode}, nil
+	return z80enc.EncodeCBReg8(template.BaseOpcode, operands[0].Register)
 }
 
 // encodeBITbr encodes BIT b,r
 func encodeBITbr(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	bit := uint8(operands[0].Value)
-	if bit > 7 {
-		return nil, fmt.Errorf("bit number must be 0-7")
+	b, err := z80enc.EncodeCBBitReg8(0x40, uint8(operands[0].Value), operands[1].Register)
+	if err != nil {
+		if v := operands[0].Value; v < 0 || v > 7 {
+			return nil, fmt.Errorf("bit number must be 0-7")
+		}
+		return nil, err
 	}
-
-	reg := register8Map[operands[1].Register]
-	cbOpcode := 0x40 | (bit << 3) | reg
-	return []uint8{0xCB, cbOpcode}, nil
+	return b, nil
 }
 
 // encodeRESbr encodes RES b,r
 func encodeRESbr(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	bit := uint8(operands[0].Value)
-	if bit > 7 {
-		return nil, fmt.Errorf("bit number must be 0-7")
+	b, err := z80enc.EncodeCBBitReg8(0x80, uint8(operands[0].Value), operands[1].Register)
+	if err != nil {
+		if v := operands[0].Value; v < 0 || v > 7 {
+			return nil, fmt.Errorf("bit number must be 0-7")
+		}
+		return nil, err
 	}
-
-	reg := register8Map[operands[1].Register]
-	cbOpcode := 0x80 | (bit << 3) | reg
-	return []uint8{0xCB, cbOpcode}, nil
+	return b, nil
 }
 
 // encodeOUTnA encodes OUT (n),A
@@ -947,17 +1071,11 @@ func encodeOUTnA(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 	if operands[0].Type != OperandIndirect {
 		return nil, fmt.Errorf("expected indirect operand as port")
 	}
-	// OUT (C),r: ED-prefixed, 0x41 | (r<<3). The register here is the source.
-	if operands[0].Register == "C" {
-		reg := register8Map[operands[1].Register]
-		return []uint8{0xED, 0x41 | (reg << 3)}, nil
-	}
-	// OUT (n),A: only A is valid for the immediate-port form.
-	if operands[1].Register != "A" {
+	b, err := z80enc.EncodeOUT(operands[0].Register, operands[1].Register, uint8(operands[0].Value))
+	if err != nil {
 		return nil, fmt.Errorf("second operand must be A for OUT (n),A")
 	}
-	port := uint8(operands[0].Value)
-	return []uint8{0xD3, port}, nil
+	return b, nil
 }
 
 // encodeINAn encodes IN A,(n)
@@ -965,29 +1083,36 @@ func encodeINAn(template *InstructionTemplate, operands []*ResolvedOperand) ([]u
 	if operands[1].Type != OperandIndirect {
 		return nil, fmt.Errorf("expected indirect operand as port")
 	}
-	// IN r,(C): ED-prefixed, 0x40 | (r<<3). The register here is the destination.
-	if operands[1].Register == "C" {
-		reg := register8Map[operands[0].Register]
-		return []uint8{0xED, 0x40 | (reg << 3)}, nil
-	}
-	// IN A,(n): only A is valid for the immediate-port form.
-	if operands[0].Register != "A" {
+	b, err := z80enc.EncodeIN(operands[0].Register, operands[1].Register, uint8(operands[1].Value))
+	if err != nil {
 		return nil, fmt.Errorf("first operand must be A for IN A,(n)")
 	}
-	port := uint8(operands[1].Value)
-	return []uint8{0xDB, port}, nil
+	return b, nil
+}
+
+// encodeINFC encodes the undocumented "IN (C)": ED 70. Reads port C,
+// sets flags exactly like the documented IN r,(C) forms, discards the
+// byte read.
+func encodeINFC(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
+	return z80enc.EncodeINFC(operands[0].Register)
+}
+
+// encodeOUTC0 encodes the undocumented "OUT (C),0": ED 71. Outputs a
+// literal zero byte to the port in C, no source register.
+func encodeOUTC0(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
+	return z80enc.EncodeOUTC0(operands[0].Register, operands[1].Value)
 }
 
 // encodeSETbr encodes SET b,r
 func encodeSETbr(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	bit := uint8(operands[0].Value)
-	if bit > 7 {
-		return nil, fmt.Errorf("bit number must be 0-7")
+	b, err := z80enc.EncodeCBBitReg8(0xC0, uint8(operands[0].Value), operands[1].Register)
+	if err != nil {
+		if v := operands[0].Value; v < 0 || v > 7 {
+			return nil, fmt.Errorf("bit number must be 0-7")
+		}
+		return nil, err
 	}
-
-	reg := register8Map[operands[1].Register]
-	cbOpcode := 0xC0 | (bit << 3) | reg
-	return []uint8{0xCB, cbOpcode}, nil
+	return b, nil
 }
 
 // encodeCBHL encodes CB-prefixed rotate/shift on (HL)/(IX+d)/(IY+d): (HL) is
@@ -999,13 +1124,11 @@ func encodeSETbr(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 // LD-preserves-flags workaround at every call site that needed it.
 func encodeCBHL(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
 	ind := operands[0]
-	switch ind.Register {
-	case "HL":
-		return []uint8{0xCB, template.BaseOpcode | 6}, nil
-	case "IX", "IY":
-		return []uint8{indexPrefix(ind.Register), 0xCB, byte(int8(ind.Displacement)), template.BaseOpcode | 6}, nil
+	b, err := z80enc.EncodeCBIndirect(template.BaseOpcode, ind.Register, int8(ind.Displacement))
+	if err != nil {
+		return nil, fmt.Errorf("expected (HL), (IX+d), or (IY+d)")
 	}
-	return nil, fmt.Errorf("expected (HL), (IX+d), or (IY+d)")
+	return b, nil
 }
 
 // encodeCBbHL encodes CB-prefixed BIT/RES/SET n,(HL)/(IX+d)/(IY+d): (HL) is
@@ -1017,17 +1140,15 @@ func encodeCBHL(template *InstructionTemplate, operands []*ResolvedOperand) ([]u
 // LD-preserves-flags workaround at all 21 sites that needed it.
 func encodeCBbHL(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
 	bit := uint8(operands[0].Value)
-	if bit > 7 {
-		return nil, fmt.Errorf("bit number must be 0-7")
-	}
 	ind := operands[1]
-	switch ind.Register {
-	case "HL":
-		return []uint8{0xCB, template.BaseOpcode | (bit << 3) | 6}, nil
-	case "IX", "IY":
-		return []uint8{indexPrefix(ind.Register), 0xCB, byte(int8(ind.Displacement)), template.BaseOpcode | (bit << 3) | 6}, nil
+	b, err := z80enc.EncodeCBBitIndirect(template.BaseOpcode, bit, ind.Register, int8(ind.Displacement))
+	if err != nil {
+		if bit > 7 {
+			return nil, fmt.Errorf("bit number must be 0-7")
+		}
+		return nil, fmt.Errorf("expected (HL), (IX+d), or (IY+d)")
 	}
-	return nil, fmt.Errorf("expected (HL), (IX+d), or (IY+d)")
+	return b, nil
 }
 
 // encodeADC16 encodes ADC HL,rp (ED-prefixed): 0xED, 0x4A|(p<<4)
@@ -1035,11 +1156,11 @@ func encodeADC16(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 	if operands[0].Register != "HL" {
 		return nil, fmt.Errorf("16-bit ADC requires HL as the destination")
 	}
-	rp, ok := register16Map[operands[1].Register]
-	if !ok {
+	b, err := z80enc.EncodeED16(0x4A, operands[1].Register)
+	if err != nil {
 		return nil, fmt.Errorf("invalid source register for ADC HL,rp")
 	}
-	return []uint8{0xED, 0x4A | (rp << 4)}, nil
+	return b, nil
 }
 
 // encodeSBC16 encodes SBC HL,rp (ED-prefixed): 0xED, 0x42|(p<<4)
@@ -1047,55 +1168,34 @@ func encodeSBC16(template *InstructionTemplate, operands []*ResolvedOperand) ([]
 	if operands[0].Register != "HL" {
 		return nil, fmt.Errorf("16-bit SBC requires HL as the destination")
 	}
-	rp, ok := register16Map[operands[1].Register]
-	if !ok {
+	b, err := z80enc.EncodeED16(0x42, operands[1].Register)
+	if err != nil {
 		return nil, fmt.Errorf("invalid source register for SBC HL,rp")
 	}
-	return []uint8{0xED, 0x42 | (rp << 4)}, nil
+	return b, nil
 }
 
 // encodeEX encodes EX DE,HL (0xEB) and EX AF,AF' (0x08)
 func encodeEX(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	a, b := operands[0].Register, operands[1].Register
-	switch {
-	case a == "DE" && b == "HL":
-		return []uint8{0xEB}, nil
-	case a == "AF" && (b == "AF" || b == "AF'"):
-		return []uint8{0x08}, nil
-	default:
-		return nil, fmt.Errorf("unsupported EX operands: %s,%s", a, b)
-	}
+	return z80enc.EncodeEX(operands[0].Register, operands[1].Register)
 }
 
 // encodeEXSPHL encodes EX (SP),HL (0xE3)
 func encodeEXSPHL(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	if operands[0].Register != "SP" || operands[1].Register != "HL" {
-		return nil, fmt.Errorf("only EX (SP),HL is supported in this form")
+	if operands[0].Register != "SP" {
+		return nil, fmt.Errorf("EX (SP),... requires SP as the first operand")
 	}
-	return []uint8{0xE3}, nil
+	return z80enc.EncodeEXSPHL(operands[1].Register)
 }
 
 // encodeIM encodes IM 0/1/2 (ED-prefixed): 0xED then 0x46/0x56/0x5E
 func encodeIM(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	switch operands[0].Value {
-	case 0:
-		return []uint8{0xED, 0x46}, nil
-	case 1:
-		return []uint8{0xED, 0x56}, nil
-	case 2:
-		return []uint8{0xED, 0x5E}, nil
-	default:
-		return nil, fmt.Errorf("IM mode must be 0, 1, or 2")
-	}
+	return z80enc.EncodeIM(operands[0].Value)
 }
 
 // encodeRST encodes RST n: 0xC7 | n, where n is one of 0x00,0x08,...,0x38
 func encodeRST(template *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	n := operands[0].Value
-	if n < 0 || n > 0x38 || (n&0x07) != 0 {
-		return nil, fmt.Errorf("RST target must be one of 00h,08h,10h,18h,20h,28h,30h,38h")
-	}
-	return []uint8{0xC7 | uint8(n)}, nil
+	return z80enc.EncodeRST(operands[0].Value)
 }
 
 // GetInstructionInfo returns information about available instructions
@@ -1129,10 +1229,10 @@ func (e *Encoder) GetAllInstructions() []string {
 // operand is hard-wired to a specific 8-bit register (e.g. MIRROR A).
 func encodeZ80NFixedReg(want string) func(*InstructionTemplate, []*ResolvedOperand) ([]uint8, error) {
 	return func(t *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-		if len(operands) != 1 || operands[0].Register != want {
+		if len(operands) != 1 {
 			return nil, fmt.Errorf("%s takes only the operand %s", t.Mnemonic, want)
 		}
-		return []uint8{t.Prefix, t.BaseOpcode}, nil
+		return z80enc.EncodeFixedOperand(t.Prefix, t.BaseOpcode, t.Mnemonic, operands[0].Register, want)
 	}
 }
 
@@ -1140,10 +1240,10 @@ func encodeZ80NFixedReg(want string) func(*InstructionTemplate, []*ResolvedOpera
 // operands are hard-wired (e.g. MUL D,E or BSLA DE,B).
 func encodeZ80NFixedRegPair(a, b string) func(*InstructionTemplate, []*ResolvedOperand) ([]uint8, error) {
 	return func(t *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-		if len(operands) != 2 || operands[0].Register != a || operands[1].Register != b {
+		if len(operands) != 2 {
 			return nil, fmt.Errorf("%s takes only the operands %s,%s", t.Mnemonic, a, b)
 		}
-		return []uint8{t.Prefix, t.BaseOpcode}, nil
+		return z80enc.EncodeFixedOperandPair(t.Prefix, t.BaseOpcode, t.Mnemonic, operands[0].Register, a, operands[1].Register, b)
 	}
 }
 
@@ -1151,70 +1251,41 @@ func encodeZ80NFixedRegPair(a, b string) func(*InstructionTemplate, []*ResolvedO
 // indirect with register "C"; any other indirect is rejected so JP (HL)/(IX)/(IY)
 // continue to be handled by the base encoder.
 func encodeZ80NJPc(t *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	if len(operands) != 1 || operands[0].Register != "C" {
+	b, err := z80enc.EncodeZ80NJPc(operands[0].Register)
+	if err != nil {
 		return nil, fmt.Errorf("expected JP (C)")
 	}
-	return []uint8{0xED, 0x98}, nil
+	return b, nil
 }
 
 // encodeZ80NTEST encodes TEST n (ED 27 n).
 func encodeZ80NTEST(t *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	return []uint8{0xED, 0x27, uint8(operands[0].Value)}, nil
+	return z80enc.EncodeZ80NTEST(uint8(operands[0].Value)), nil
 }
 
 // encodeZ80NADDrrA encodes ADD HL,A / ADD DE,A / ADD BC,A (ED 31/32/33).
 func encodeZ80NADDrrA(t *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	if operands[1].Register != "A" {
-		return nil, fmt.Errorf("ADD %s,%s is not a Z80N instruction", operands[0].Register, operands[1].Register)
-	}
-	var op uint8
-	switch operands[0].Register {
-	case "HL":
-		op = 0x31
-	case "DE":
-		op = 0x32
-	case "BC":
-		op = 0x33
-	default:
-		return nil, fmt.Errorf("ADD %s,A: only HL, DE, BC are valid", operands[0].Register)
-	}
-	return []uint8{0xED, op}, nil
+	return z80enc.EncodeZ80NADDrrA(operands[0].Register, operands[1].Register)
 }
 
 // encodeZ80NADDrrnn encodes ADD HL,nn / ADD DE,nn / ADD BC,nn (ED 34/35/36).
 // The 16-bit immediate is little-endian (unlike PUSH nn).
 func encodeZ80NADDrrnn(t *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	var op uint8
-	switch operands[0].Register {
-	case "HL":
-		op = 0x34
-	case "DE":
-		op = 0x35
-	case "BC":
-		op = 0x36
-	default:
-		return nil, fmt.Errorf("ADD %s,nn: only HL, DE, BC are valid", operands[0].Register)
-	}
-	v := uint16(operands[1].Value)
-	return []uint8{0xED, op, uint8(v), uint8(v >> 8)}, nil
+	return z80enc.EncodeZ80NADDrrnn(operands[0].Register, uint16(operands[1].Value))
 }
 
 // encodeZ80NPUSHnn encodes PUSH nn (ED 8A hi lo). This is the only Z80 operand
 // encoded BIG-endian: the high byte precedes the low byte.
 func encodeZ80NPUSHnn(t *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	v := uint16(operands[0].Value)
-	return []uint8{0xED, 0x8A, uint8(v >> 8), uint8(v)}, nil
+	return z80enc.EncodeZ80NPUSHnn(uint16(operands[0].Value)), nil
 }
 
 // encodeZ80NNEXTREGnn encodes NEXTREG n,n (ED 91 reg val).
 func encodeZ80NNEXTREGnn(t *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	return []uint8{0xED, 0x91, uint8(operands[0].Value), uint8(operands[1].Value)}, nil
+	return z80enc.EncodeZ80NNEXTREGnn(uint8(operands[0].Value), uint8(operands[1].Value)), nil
 }
 
 // encodeZ80NNEXTREGnA encodes NEXTREG n,A (ED 92 reg); the value comes from A.
 func encodeZ80NNEXTREGnA(t *InstructionTemplate, operands []*ResolvedOperand) ([]uint8, error) {
-	if operands[1].Register != "A" {
-		return nil, fmt.Errorf("NEXTREG n,%s: second operand must be an immediate or A", operands[1].Register)
-	}
-	return []uint8{0xED, 0x92, uint8(operands[0].Value)}, nil
+	return z80enc.EncodeZ80NNEXTREGnA(uint8(operands[0].Value), operands[1].Register)
 }
