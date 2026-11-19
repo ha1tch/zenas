@@ -43,6 +43,10 @@ following all behave the way you expect:
   pre-defined from the command line via `--define`.
 - **A pasmo-format symbol file.** `--sym` writes the same `NAME EQU 0XXXXH` file
   pasmo does, so existing tooling that parses it keeps working.
+- **Other tools' symbol files.** `--map` writes the map CSpect's debugger
+  loads, the same file sjasmplus's `CSPECTMAP` gives; `--symbols=FILE` defines
+  the names of a CSpect map, a pasmo or sjasmplus symbol file or a z88dk map
+  before assembling. See [Symbol files](MANUAL.md#symbol-files).
 
 zenas assembles real-world operating-system source byte-for-byte identically to
 pasmo, so for ordinary code the output is not merely equivalent — it is the same
@@ -55,8 +59,9 @@ plain instruction assembles; they are about the layers around it.
 
 - **Two output modes, not one.** `zenas assemble` emits a raw binary, the way any
   assembler does. `zenas build` goes a step further and packages the result into
-  a loadable artifact — a tape (`.tap`/`.tzx`) or a runnable snapshot
-  (`.sna`/`.z80`) — without a separate tool. See [the manual](MANUAL.md) for the
+  a loadable artifact — a tape (`.tap`/`.tzx`/`.pzx`), a runnable snapshot
+  (`.sna`/`.z80`/`.szx`) or a Spectrum Next executable (`.nex`) — without a
+  separate tool. See [the manual](MANUAL.md) for the
   full `build` flag set.
 - **Macros come in two flavours.** Alongside a traditional
   `MACRO NAME(params) ... ENDMACRO` system, zenas has a C-style function syntax

@@ -18,6 +18,251 @@ since those layers are deliberately not shared -- a genuinely
 different design concern per front end, not a gap). Entries before
 this convention started (anything prior to 0.9.0) are untagged.
 
+## [0.16.1] - 2026-11-16
+
+Documents only.
+
+### Changed
+
+- **The README is shorter** (139 lines; it was 255): the three usage
+  sections are one block of examples, since the manual and the runtime
+  reference have every option, and the Library section is
+  `docs/LIBRARY.md`, moved as it was.
+
+## [0.16.0] - 2026-11-16
+
+What `zenas build` and the tag options do, as packages. The command
+writes the same files as 0.15.1 (compared byte for byte, all seven
+formats).
+
+### Added
+
+- **`pkg/artifact`**: `Encode(result, format, options)` returns an
+  assembled program as a `.tap`, `.tzx`, `.pzx`, `.sna`, `.z80`, `.szx`
+  or `.nex`, in memory. `Options` is `--start`, `--sp`, `--model`,
+  `--loader`, `--border` and `--core`; `Formats`, `ParseFormat` and the
+  methods of `Format` (`Ext`, `Tape`, `Snapshot`, `Next`, `NeedsStart`)
+  are the rules the command applied; `Request`, `ResolveStart`,
+  `ParseAddress` and `ParseNEXOptions` are its parts.
+- **Build tags and defines in the `assembler` package**:
+  `(*Assembler).DefineTags`, `TagDefines`, `TagSymbol`, `MaxTags` and
+  `ParseDefine`. They were functions of the command.
+
+### Changed
+
+- `zenas build` and `zenas assemble` use those packages and have no
+  rule of their own for formats, entry points or tags.
+- The messages for a bad tag name and a bad `--define` no longer begin
+  with the option's name.
+
+### Known state
+
+- Tried with zendis 0.8.1 in one process: assemble with tags, `Encode`
+  a NEX file, list its banks, disassemble it with the program's names
+  and two data ranges, assemble that source and `Encode` again: the
+  same NEX file.
+- Still in the command only: `run`, `assert`, `test` and the `--json`
+  reports.
+
+## [0.15.1] - 2026-11-16
+
+### Changed
+
+- **`zenas build --nex` turns the Z80N instructions on by itself.** A
+  `.nex` runs on a Next only, so 0.15.0's need for `--nex --next` was a
+  second flag that said nothing. `--cpu=Z80` keeps them off, for a source
+  that uses a Z80N mnemonic as a name of its own.
+
+## [0.15.0] - 2026-11-16
+
+### Added
+
+- **`zenas build --nex`** writes a Spectrum Next executable: the code in
+  the banks paged in when a NEX program starts (bank 5 at 0x4000, bank 2
+  at 0x8000, bank 0 at 0xC000), `--start` as its PC, `--sp` as its stack
+  pointer. `--border <0-7>` is the border colour the loader sets and
+  `--core <a.b.c>` the lowest core version the file asks for (2.0.28 by
+  default). Checked by building a Z80N program with zenas alone and
+  starting it with `.nexload` under NextZXOS in ZenZX.
+- **`zenas build --szx`** and **`--pzx`**: a ZX-State snapshot, and the
+  tape as PZX (with `--loader`, the loader tape).
+- **`zenas build` takes `--next`/`--zxnext`/`--cpu=`, `--define` and
+  `--tag`**, as `assemble` does. It had none of them, so a source with
+  Z80N instructions, command-line symbols or build tags could be
+  assembled and not packaged. `ZENAS_TAGS` is defined under `build` as
+  under `assemble`.
+- A section on `build` in the manual, which had none.
+
+### Changed
+
+- **zentools 0.16.0** (was 0.15.0), which has `build.EncodeNEX` and
+  `build.EncodePZX`.
+- `zenas build` prints each assembly error with its line; it printed
+  their number only.
+
+### Removed
+
+- **`pkg/build`**, a copy of an older state of zentools' package of the
+  same name. `zenas build` uses zentools', and nothing imported the copy. A program that imported
+  `github.com/ha1tch/zenas/pkg/build` imports
+  `github.com/ha1tch/zentools/pkg/build` instead; what it had is there
+  under the same names.
+
+## [0.14.0] - 2026-11-16
+
+### Changed
+
+- **`pkg/symfile` is zentools' now** (`github.com/ha1tch/zentools/pkg/symfile`,
+  zentools 0.15.0), and this module's copy is gone. zendis uses the same
+  package from its 0.7.0, so the symbols of an assembled program
+  (`assembler.ExportSymbols`) go to a disassembler or a debugger in the
+  same process as data, where 0.13.0 passed them as a map in a buffer.
+  Anything that imported `github.com/ha1tch/zenas/pkg/symfile` changes
+  the import path; the names in it are the same.
+- **zentools v0.4.1 to v0.15.0.** `zenas build` uses its tape, snapshot
+  and BASIC packages. The build tests pass unchanged and a `.sna` built
+  from the same source is the same file. A tape with `--loader` is seven
+  bytes shorter: the newer tokeniser stores the BASIC loader without the
+  spaces round its keywords (`CLEAR 32767`, `LOAD ""CODE`,
+  `RANDOMIZE USR`), which is the same program to the ROM. That tape was
+  compared byte by byte and not loaded in an emulator.
+
+## [0.13.0] - 2026-11-16
+
+The symbol-file features as a library, for a program that embeds the
+assembler. The command line's output is the same as 0.12.1's: the map,
+the `.sym` and the binary of the same source were compared.
+
+### Added
+
+- `assembler.WriteCSpectMap`, `assembler.WritePasmoSym`,
+  `assembler.ExportSymbols` and `assembler.DefaultNextPaging`: what
+  `--map`, `--sym` and `--map-paging` do, to any `io.Writer` or as data.
+- `(*Assembler).ImportSymbols(r, format)`: what `--symbols` does, from
+  any `io.Reader`, with the same rules (names made fit, values over 16
+  bits left out, two values for one name an error).
+- `symfile.Table` and `symfile.Identifier` in `pkg/symfile`, in step
+  with zendis 0.6.0's copy.
+
+### Changed
+
+- The command (`symbols_cmd.go`, `main.go`, `build_cmd.go`) keeps the
+  options and the files and calls the package for the rest. The
+  conflict message for `--symbols` now reads "... in what was imported
+  before".
+
+### Known state
+
+- Tried with zendis 0.6.0 in one process: assemble in memory, write
+  the map to a buffer, read it into zendis's table, disassemble the
+  bytes with the program's names. zendis's README has the code.
+- `pkg/symfile` exists twice, here and in zendis; the two are different
+  packages to Go, which is why names pass between them as a map
+  (zendis T-19).
+
+## [0.12.1] - 2026-11-16
+
+Tidying. Nothing here changes the bytes assembled: the sixteen examples
+assemble to the same files before and after, and the golden vectors that
+were already recorded are unchanged.
+
+### Removed
+
+- `assembler/prog.asm` and `assembler/macro_test_examples.asm`: two
+  sample sources left in the package folder since the first commit.
+  Nothing referenced them, and the second no longer assembled (a macro
+  parameter named `a`, refused since the reserved-name check).
+  `examples/` is where the samples are, and `make smoke` assembles those.
+
+### Fixed
+
+- **`zenas help` and `zenas help --all` did not list every command.**
+  The short help had no `run`, `assert` or `test`; the full one had no
+  `build`, `run` or `assert`.
+- **`make smoke` could not fail.** It printed "FAIL (expected for
+  in-progress syntax)" for an example that did not assemble and went
+  on; every example assembles, so a failure now fails the target.
+- **`make test-sjasmplus` failed with sjasmplus 1.24.1**, which no
+  longer accepts `LDIRSCALE`: the comparison counted a form sjasmplus
+  rejects as a difference. Such a form is now named and skipped, as the
+  base Z80 half of the same script already did;
+  `tools/check_z80n_coverage.sh` still checks it against the reference
+  bytes. 534 base forms and 31 Z80N forms match, one skipped.
+- **`tools/golden_vectors.txt` was behind its generator**: 531 vectors
+  where `tools/gen_golden_vectors.sh` gives 549. The eighteen missing
+  ones are the IX/IY forms added to the coverage list in 0.11.x
+  (`LD IX,(nn)`, `EX (SP),IX`, the ALU group on `(IX+d)`, and their IY
+  twins). Regenerated; the 531 that were there are unchanged.
+- **`release.sh`'s checkpoint zip took in the edit journal**
+  (`.ed-journal.json`) and any `release-*.log` when cut from a working
+  tree that had them; both are now excluded.
+- **Counts in the documents**: the Z80N set is 30 instructions and 32
+  test forms since `LDIRSCALE` was added, where `README.md` and
+  `docs/INSTRUCTION_SET.md` still said 29 and 31. `README.md`'s `build`
+  usage has the symbol options.
+
+### Changed
+
+- **`gofmt` over the twelve Go files that were not formatted**
+  (`assembler/`, `pkg/build/`, `run_test.go`), as its own commit:
+  whitespace and alignment only, for a fork that carries diffs against
+  these files to skip in one piece.
+
+## [0.12.0] - 2026-11-16
+
+Symbol files of other tools, out and in. Nothing here changes the bytes
+assembled: the instruction, golden-vector and example checks are as they
+were.
+
+### Added
+
+- `--map[=path]` (`assemble` and `build`): the map file CSpect's debugger
+  loads with `-map`, as SNASM and sjasmplus's `CSPECTMAP` write it:
+  16-bit value, physical address, type (`00` label, `01` constant) and
+  name. For the same source it is the file sjasmplus 1.24.1 writes for a
+  `ZXSPECTRUMNEXT` device, compared line by line, except that sjasmplus
+  writes the names in capitals. `--map-paging` gives the 8K page of each
+  slot when the code is meant for other pages than the Next's own.
+- `--symbols=FILE` (`assemble` and `build`, repeatable) with
+  `--symbols-format`: defines the names of a CSpect map, a pasmo or zenas
+  `.sym`, an sjasmplus `--sym` file or a z88dk `.map` before assembling.
+  Imported names are not written to `--sym` or `--map`; a name the source
+  defines replaces an imported one; two files that disagree about a name
+  are an error.
+- `zenas build --sym[=path]`: `build` could not write a symbol file.
+- `pkg/symfile`: the reader and the map writer, the same package as
+  zendis's (zendis 0.5.1), kept in step by hand.
+- The assembler records what each symbol is
+  (`assembler/symbols.go`: `SymbolLabel`, `SymbolConstant`,
+  `SymbolImported`; `AssemblyResult.SymbolKinds`; `Assembler.Import`).
+  A fork with its own front end needs the same three calls where it
+  defines a label, an `EQU` and a command-line define; nothing in the
+  lexer, parser, macros or encoder changed.
+
+### Fixed
+
+- **The vendored Python `repoman/` folder is gone from the repository.**
+  0.9.1 removed it as unused, and the folder stayed in git: the files
+  were deleted from the working tree that release was cut from and
+  never from the repository, so every clone still had the thirteen
+  scripts and their documents, and `release.sh`'s own badcode scan
+  failed on one of them for any release cut from a clone. Nothing calls
+  them: `syncver.sh` and the `Makefile` do not use repoman at all, and
+  `release.sh` runs the `repoman` binary (gorepoman) for its badcode
+  scan when it is on `PATH`. That binary is now the only repoman this
+  project has. `release.sh` keeps `repoman/*` in its zip
+  exclusions, which does no harm.
+
+### Known state
+
+- A map zenas wrote has not been loaded into CSpect, and the z88dk reader
+  has not read a file z88dk made.
+- zenas has no paging directives: one `--map-paging` holds for the whole
+  file, so a source with code for several pages needs one assembly a
+  page. Local labels (`PRIMARY@LOCAL` in a map) do not exist in zenas and
+  are never written.
+- `build` still takes no `--define` or `--tag`.
+
 ## [0.11.2] - 2026-09-05
 
 Found while porting Oakhollow, a real pasmo-sourced ZX Spectrum game, as

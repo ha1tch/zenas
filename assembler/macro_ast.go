@@ -112,14 +112,14 @@ type MacroParameter struct {
 
 // MacroDefinition represents a complete macro definition
 type MacroDefinition struct {
-	Name        string
-	Package     string // affiliation set by .PACKAGE; empty = default package
-	Parameters  []*MacroParameter
-	ReturnType  ParameterType
-	Body        []ParsedLine
-	Style       MacroStyle
-	LineNumber  int
-	UniqueID    int // For generating unique labels
+	Name       string
+	Package    string // affiliation set by .PACKAGE; empty = default package
+	Parameters []*MacroParameter
+	ReturnType ParameterType
+	Body       []ParsedLine
+	Style      MacroStyle
+	LineNumber int
+	UniqueID   int // For generating unique labels
 }
 
 // MacroCall represents a call to a macro
@@ -146,7 +146,7 @@ var (
 func ParseParameterType(typeStr string) (ParameterType, error) {
 	// Convert to lowercase for case-insensitive comparison
 	lowerType := strings.ToLower(typeStr)
-	
+
 	switch lowerType {
 	case "uint8_t", "uint8", "byte":
 		return TypeUint8, nil
@@ -158,8 +158,8 @@ func ParseParameterType(typeStr string) (ParameterType, error) {
 		return TypeRegister16, nil
 	case "address_t", "addr":
 		return TypeAddress, nil
-	case "void":  // Add support for void return type
-		return TypeUint8, nil  // Use uint8 as default, could add TypeVoid if needed
+	case "void": // Add support for void return type
+		return TypeUint8, nil // Use uint8 as default, could add TypeVoid if needed
 	default:
 		return TypeUint8, fmt.Errorf("unknown parameter type: %s", typeStr)
 	}

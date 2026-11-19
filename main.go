@@ -7,8 +7,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/ha1tch/zenas/assembler"
@@ -51,7 +49,10 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  zenas assemble <input.asm> [output.bin] [options]")
-	fmt.Println("  zenas build <input.asm> [--tap] [--tzx] [--sna] [--z80] [--loader] [options]")
+	fmt.Println("  zenas build <input.asm> [--tap] [--tzx] [--pzx] [--sna] [--z80] [--szx] [--nex] [options]")
+	fmt.Println("  zenas run <input.asm> [options]")
+	fmt.Println("  zenas assert <input.asm> --expect ... [options]")
+	fmt.Println("  zenas test")
 	fmt.Println("  zenas version")
 	fmt.Println("  zenas help [--all]")
 	fmt.Println()
@@ -60,6 +61,8 @@ func printUsage() {
 	fmt.Println("  --define=NAME[=VAL]   Pre-define a symbol; drives IF/IFDEF")
 	fmt.Println("  --tag NAME            Select a build tag (defines ZENAS_TAG_NAME)")
 	fmt.Println("  --sym[=path]          Write a pasmo-format symbol file")
+	fmt.Println("  --map[=path]          Write a CSpect map file (for its debugger's -map)")
+	fmt.Println("  --symbols=FILE        Use the names in another tool's symbol file")
 	fmt.Println("  --hex                 Always show a hex dump of the output")
 	fmt.Println()
 	fmt.Println("Examples:")
@@ -77,6 +80,11 @@ func printUsageFull() {
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  zenas assemble <input.asm> [output.bin] [options]")
+	fmt.Println("  zenas build <input.asm> [options]      Assemble and package to tape, snapshot or .nex;")
+	fmt.Println("                         run it with no input for its options")
+	fmt.Println("  zenas run <input.asm> [options]        Assemble and execute in the emulator")
+	fmt.Println("  zenas assert <input.asm> --expect ...  Execute and check the final state")
+	fmt.Println("                         (run and assert: docs/RUNTIME.md)")
 	fmt.Println("  zenas version          Show the version (also -v, --version)")
 	fmt.Println("  zenas test             Run the built-in self-tests")
 	fmt.Println("  zenas help [--all]     Show help; --all for this full reference")
@@ -86,6 +94,14 @@ func printUsageFull() {
 	fmt.Println("  --hex                 Always show a hex dump of the output")
 	fmt.Println("  --no-hex              Never show a hex dump")
 	fmt.Println("  --sym[=path]          Write a pasmo-format symbol file (default: <output>.sym)")
+	fmt.Println("  --map[=path]          Write a CSpect map file, as SNASM and sjasmplus do (default: <output>.map)")
+	fmt.Println("  --map-paging=P,..     The 8K page in each of the eight slots, for the map's physical")
+	fmt.Println("                        addresses (default: 14,15,10,11,4,5,0,1, the Next's own)")
+	fmt.Println("  --symbols=FILE        Define the names in a symbol file before assembling: a CSpect map,")
+	fmt.Println("                        a pasmo or zenas .sym, an sjasmplus --sym file or a z88dk .map.")
+	fmt.Println("                        May be repeated. They are not written to --sym or --map")
+	fmt.Println("  --symbols-format=F    The format of the --symbols files: auto (default), cspect, pasmo,")
+	fmt.Println("                        zenas, sjasmplus or z88dk")
 	fmt.Println("  --json=LEVEL          Emit a JSON report instead of a binary (see below)")
 	fmt.Println()
 	fmt.Println("Assembly options:")
@@ -139,6 +155,7 @@ func handleAssemble() {
 	defines := map[string]uint16{}
 	tags := []string{} // tag names in command-line order, for the ZENAS_TAGS bitmask
 	cpuTarget := "Z80" // CPU target: Z80 (default) or Z80N
+	symOpts := newSymbolOptions()
 
 	// Parse remaining arguments
 	for i := 3; i < len(os.Args); i++ {
@@ -168,7 +185,7 @@ func handleAssemble() {
 				os.Exit(1)
 			}
 		} else if strings.HasPrefix(arg, "--define=") {
-			name, val, err := parseDefine(strings.TrimPrefix(arg, "--define="))
+			name, val, err := assembler.ParseDefine(strings.TrimPrefix(arg, "--define="))
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
@@ -190,11 +207,16 @@ func handleAssemble() {
 			} else {
 				tag = strings.TrimPrefix(arg, "--tag=")
 			}
-			if _, err := tagSymbol(tag); err != nil {
+			if _, err := assembler.TagSymbol(tag); err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
 			}
 			tags = append(tags, strings.TrimSpace(tag))
+		} else if handled, err := symOpts.parse(arg); handled {
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
 		} else if outputFile == "" {
 			outputFile = arg
 		}
@@ -208,26 +230,14 @@ func handleAssemble() {
 	// 16-bit, so at most 16 distinct tags can occupy bits. ZENAS_TAGS is always
 	// defined (0 when no tags are set) so source that references it compiles in
 	// every configuration.
-	var mask uint16
-	bit := 0
-	seen := map[string]bool{}
-	for _, tag := range tags {
-		sym, _ := tagSymbol(tag) // already validated during parsing
-		defines[sym] = 1
-		if seen[tag] {
-			continue
-		}
-		seen[tag] = true
-		if bit >= 16 {
-			fmt.Println("Error: too many distinct --tag values (maximum 16 occupy bits in ZENAS_TAGS)")
-			os.Exit(1)
-		}
-		bitVal := uint16(1) << uint(bit)
-		defines["ZENAS_TAGBIT_"+tag] = bitVal
-		mask |= bitVal
-		bit++
+	tagDefines, err := assembler.TagDefines(tags)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
 	}
-	defines["ZENAS_TAGS"] = mask
+	for name, val := range tagDefines {
+		defines[name] = val
+	}
 
 	// Generate output filename if not specified
 	if outputFile == "" && jsonLevel == "" {
@@ -253,7 +263,10 @@ func handleAssemble() {
 	}
 
 	// Normal binary output
-	err := assembleFile(inputFile, outputFile, symFile, hexMode, charset, showWarnings, defines, cpuTarget == "Z80N")
+	if symOpts.mapRequested && symOpts.mapFile == "" {
+		symOpts.mapFile = symOpts.mapPath(strings.TrimSuffix(outputFile, filepath.Ext(outputFile)))
+	}
+	err = assembleFile(inputFile, outputFile, symFile, hexMode, charset, showWarnings, defines, cpuTarget == "Z80N", symOpts)
 	if err != nil {
 		fmt.Printf("Assembly failed: %v\n", err)
 		os.Exit(1)
@@ -905,71 +918,13 @@ func outputJSON(data interface{}) error {
 // one line per symbol, sorted by name. Values are 16-bit, rendered as
 // zero-padded uppercase hex with a leading 0 and trailing H (pasmo's
 // convention, e.g. 08000H). This is the format the downstream tooling
-// (gen_memmap.py, release.sh) parses.
-func writeSymFile(path string, symbols map[string]uint16) error {
-	names := make([]string, 0, len(symbols))
-	for name := range symbols {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	var b strings.Builder
-	for _, name := range names {
-		fmt.Fprintf(&b, "%s\t\tEQU 0%04XH\n", name, symbols[name])
-	}
-	return ioutil.WriteFile(path, []byte(b.String()), 0644)
+// (gen_memmap.py, release.sh) parses. The writing itself is
+// assembler.WritePasmoSym, for a program that embeds the assembler.
+func writeSymFile(path string, result *assembler.AssemblyResult) error {
+	return writeTo(path, func(f *os.File) error { return assembler.WritePasmoSym(f, result) })
 }
 
-// tagSymbol turns a --tag name into the symbol it defines: ZENAS_TAG_<name>.
-// The name must be a valid symbol identifier (letters, digits, underscore; not
-// starting with a digit) so the resulting symbol is usable in IF/IFDEF.
-func tagSymbol(tag string) (string, error) {
-	tag = strings.TrimSpace(tag)
-	if tag == "" {
-		return "", fmt.Errorf("--tag requires a non-empty tag name")
-	}
-	for i, r := range tag {
-		isLetter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
-		isDigit := r >= '0' && r <= '9'
-		if r == '_' || isLetter || (isDigit && i > 0) {
-			continue
-		}
-		return "", fmt.Errorf("invalid --tag name %q: tags must be identifiers (letters, digits, underscore; not starting with a digit)", tag)
-	}
-	return "ZENAS_TAG_" + tag, nil
-}
-
-// parseDefine parses a --define value of the form NAME or NAME=VALUE.
-// A bare NAME defines the symbol as 1. VALUE accepts decimal, 0x hex, or $ hex.
-func parseDefine(s string) (string, uint16, error) {
-	name := s
-	valStr := "1"
-	if idx := strings.IndexByte(s, '='); idx >= 0 {
-		name = s[:idx]
-		valStr = s[idx+1:]
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "", 0, fmt.Errorf("--define requires a symbol name")
-	}
-	valStr = strings.TrimSpace(valStr)
-	var v int64
-	var err error
-	switch {
-	case strings.HasPrefix(valStr, "0x"), strings.HasPrefix(valStr, "0X"):
-		v, err = strconv.ParseInt(valStr[2:], 16, 32)
-	case strings.HasPrefix(valStr, "$"):
-		v, err = strconv.ParseInt(valStr[1:], 16, 32)
-	default:
-		v, err = strconv.ParseInt(valStr, 10, 32)
-	}
-	if err != nil {
-		return "", 0, fmt.Errorf("invalid --define value %q: %v", valStr, err)
-	}
-	return name, uint16(v), nil
-}
-
-func assembleFile(inputFile, outputFile, symFile, hexMode, charset string, showWarnings bool, defines map[string]uint16, z80n bool) error {
+func assembleFile(inputFile, outputFile, symFile, hexMode, charset string, showWarnings bool, defines map[string]uint16, z80n bool, symOpts *symbolOptions) error {
 	// Read input file
 	content, err := ioutil.ReadFile(inputFile)
 	if err != nil {
@@ -992,6 +947,11 @@ func assembleFile(inputFile, outputFile, symFile, hexMode, charset string, showW
 	// Apply command-line defines (build-tag style) before assembly.
 	for name, val := range defines {
 		asm.Define(name, val)
+	}
+
+	// Names from other tools' symbol files (--symbols).
+	if _, err := symOpts.importSymbols(asm); err != nil {
+		return fmt.Errorf("--symbols: %v", err)
 	}
 
 	asm.SetBaseDir(filepath.Dir(inputFile))
@@ -1028,8 +988,15 @@ func assembleFile(inputFile, outputFile, symFile, hexMode, charset string, showW
 
 	// Write symbol file if requested
 	if symFile != "" {
-		if err := writeSymFile(symFile, result.Symbols); err != nil {
+		if err := writeSymFile(symFile, result); err != nil {
 			return fmt.Errorf("failed to write symbol file: %v", err)
+		}
+	}
+
+	// Write the CSpect map if requested
+	if symOpts.mapFile != "" {
+		if err := writeMapFile(symOpts.mapFile, result, symOpts.paging); err != nil {
+			return fmt.Errorf("failed to write map file: %v", err)
 		}
 	}
 

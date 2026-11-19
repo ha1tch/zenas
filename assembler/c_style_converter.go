@@ -49,7 +49,7 @@ func (c *CStyleConverter) ConvertToTraditional(tokens []Token) ([]Token, error) 
 	if c.debug {
 		fmt.Printf("[DEBUG] ConvertToTraditional called with %d tokens\n", len(tokens))
 	}
-	
+
 	var result []Token
 	state := &ConversionState{
 		tokens:   tokens,
@@ -61,7 +61,7 @@ func (c *CStyleConverter) ConvertToTraditional(tokens []Token) ([]Token, error) 
 		if c.debug {
 			fmt.Printf("[DEBUG] Processing token %d: %s(%q)\n", state.position, token.Type, token.Value)
 		}
-		
+
 		// Skip whitespace and comments
 		if c.isWhitespaceOrComment(state) {
 			if c.debug {
@@ -328,18 +328,18 @@ func (c *CStyleConverter) isAssignment(state *ConversionState) bool {
 
 	equals := state.peek(1)
 	result := equals.Type == TokenEquals
-	
+
 	if c.debug && result {
 		fmt.Printf("[DEBUG] isAssignment: %s = ...\n", state.current().Value)
 	}
-	
+
 	return result
 }
 
 func (c *CStyleConverter) isFunctionDefinition(state *ConversionState) bool {
 	// Pattern: return_type function_name(params) { ... }
 	// Example: uint8_t add_two(uint8_t a) { ... }
-	
+
 	// Look for return type (optional)
 	pos := 0
 	if c.isTypeKeyword(state.peek(pos).Value) {
@@ -354,11 +354,11 @@ func (c *CStyleConverter) isFunctionDefinition(state *ConversionState) bool {
 
 	// Opening parenthesis
 	result := state.peek(pos).Type == TokenLParen
-	
+
 	if c.debug && result {
 		fmt.Printf("[DEBUG] isFunctionDefinition: detected function starting with %s\n", state.current().Value)
 	}
-	
+
 	return result
 }
 
@@ -371,18 +371,18 @@ func (c *CStyleConverter) isAsmBlock(state *ConversionState) bool {
 
 	next := state.peek(1)
 	result := next.Type == TokenLBrace
-	
+
 	if c.debug && result {
 		fmt.Printf("[DEBUG] isAsmBlock: detected asm block\n")
 	}
-	
+
 	return result
 }
 
 func (c *CStyleConverter) isStandaloneCall(state *ConversionState) bool {
 	// Pattern: function_name(args);
 	// Example: set_led(); or test_func();
-	
+
 	// Must start with identifier
 	if state.current().Type != TokenIdentifier {
 		if c.debug {
@@ -390,7 +390,7 @@ func (c *CStyleConverter) isStandaloneCall(state *ConversionState) bool {
 		}
 		return false
 	}
-	
+
 	// Check that it's not a type keyword (avoid false positives)
 	if c.isTypeKeyword(state.current().Value) {
 		if c.debug {
@@ -398,15 +398,15 @@ func (c *CStyleConverter) isStandaloneCall(state *ConversionState) bool {
 		}
 		return false
 	}
-	
-	// Next token must be opening parenthesis  
+
+	// Next token must be opening parenthesis
 	paren := state.peek(1)
 	result := paren.Type == TokenLParen
-	
+
 	if c.debug {
 		fmt.Printf("[DEBUG] isStandaloneCall: %s + %s = %v\n", state.current().Value, paren.Type, result)
 	}
-	
+
 	return result
 }
 
@@ -447,9 +447,9 @@ func (c *CStyleConverter) convertVariableDeclaration(state *ConversionState) ([]
 
 	// Determine size based on type
 	size := 1
-	if strings.Contains(strings.ToLower(typeName), "16") || 
-	   strings.ToLower(typeName) == "word" || 
-	   strings.ToLower(typeName) == "address_t" {
+	if strings.Contains(strings.ToLower(typeName), "16") ||
+		strings.ToLower(typeName) == "word" ||
+		strings.ToLower(typeName) == "address_t" {
 		size = 2
 	}
 
@@ -496,7 +496,7 @@ func (c *CStyleConverter) convertDirectAssignment(state *ConversionState, varNam
 		{Type: TokenComma, Value: ",", Line: state.current().Line},
 		{Type: TokenIdentifier, Value: varName, Line: state.current().Line},
 		{Type: TokenNewline, Value: "\n", Line: state.current().Line},
-		
+
 		// Store value at (HL)
 		{Type: TokenIdentifier, Value: "LD", Line: state.current().Line},
 		{Type: TokenLParen, Value: "(", Line: state.current().Line},
@@ -523,7 +523,7 @@ func (c *CStyleConverter) convertMacroCallAssignment(state *ConversionState, var
 	for i, arg := range macroCall.Arguments {
 		if i < len(convention.ParamRegs) {
 			reg := convention.ParamRegs[i]
-			
+
 			tokens = append(tokens,
 				Token{Type: TokenIdentifier, Value: "LD", Line: state.current().Line},
 				Token{Type: TokenIdentifier, Value: reg, Line: state.current().Line},
@@ -542,14 +542,14 @@ func (c *CStyleConverter) convertMacroCallAssignment(state *ConversionState, var
 	// Add arguments in traditional format
 	if len(macroCall.Arguments) > 0 {
 		tokens = append(tokens, Token{Type: TokenLParen, Value: "(", Line: state.current().Line})
-		
+
 		for i, arg := range macroCall.Arguments {
 			if i > 0 {
 				tokens = append(tokens, Token{Type: TokenComma, Value: ",", Line: state.current().Line})
 			}
 			tokens = append(tokens, Token{Type: TokenNumber, Value: fmt.Sprintf("%d", arg.Value), Line: state.current().Line})
 		}
-		
+
 		tokens = append(tokens, Token{Type: TokenRParen, Value: ")", Line: state.current().Line})
 	}
 
@@ -564,7 +564,7 @@ func (c *CStyleConverter) convertMacroCallAssignment(state *ConversionState, var
 			Token{Type: TokenComma, Value: ",", Line: state.current().Line},
 			Token{Type: TokenIdentifier, Value: varName, Line: state.current().Line},
 			Token{Type: TokenNewline, Value: "\n", Line: state.current().Line},
-			
+
 			// Store A register at (HL)
 			Token{Type: TokenIdentifier, Value: "LD", Line: state.current().Line},
 			Token{Type: TokenLParen, Value: "(", Line: state.current().Line},
@@ -662,7 +662,7 @@ func (c *CStyleConverter) convertFunctionDefinition(state *ConversionState) ([]T
 	// Add parameters, preserving any width marker as "type name".
 	if len(params) > 0 {
 		tokens = append(tokens, Token{Type: TokenLParen, Value: "(", Line: state.current().Line})
-		
+
 		for i, param := range params {
 			if i > 0 {
 				tokens = append(tokens, Token{Type: TokenComma, Value: ",", Line: state.current().Line})
@@ -673,7 +673,7 @@ func (c *CStyleConverter) convertFunctionDefinition(state *ConversionState) ([]T
 			}
 			tokens = append(tokens, Token{Type: TokenIdentifier, Value: param.name, Line: state.current().Line})
 		}
-		
+
 		tokens = append(tokens, Token{Type: TokenRParen, Value: ")", Line: state.current().Line})
 	}
 
@@ -691,18 +691,18 @@ func (c *CStyleConverter) convertFunctionDefinition(state *ConversionState) ([]T
 	if c.debug {
 		fmt.Printf("[DEBUG] Processing function body...\n")
 	}
-	
+
 	bodyTokenCount := 0
 	braceDepth := 1 // We already consumed the opening brace
 	sawReturn := false
-	
+
 	for braceDepth > 0 && state.current().Type != TokenEOF {
 		token := state.current()
 		if c.debug {
 			fmt.Printf("[DEBUG] Body token %d: %s(%q) [depth=%d]\n", bodyTokenCount, token.Type, token.Value, braceDepth)
 		}
 		bodyTokenCount++
-		
+
 		// Track brace depth FIRST
 		if token.Type == TokenLBrace {
 			braceDepth++
@@ -723,7 +723,7 @@ func (c *CStyleConverter) convertFunctionDefinition(state *ConversionState) ([]T
 				break
 			}
 		}
-		
+
 		if c.isReturnStatement(state) {
 			retTokens, err := c.convertReturn(state, returnType)
 			if err != nil {
@@ -817,11 +817,11 @@ func (c *CStyleConverter) convertFunctionDefinition(state *ConversionState) ([]T
 			Token{Type: TokenNewline, Value: "\n", Line: state.current().Line},
 			Token{Type: TokenIdentifier, Value: funcName, Line: state.current().Line},
 		)
-		
+
 		// Add parameters if any
 		if len(params) > 0 {
 			tokens = append(tokens, Token{Type: TokenLParen, Value: "(", Line: state.current().Line})
-			
+
 			for i := range params {
 				if i > 0 {
 					tokens = append(tokens, Token{Type: TokenComma, Value: ",", Line: state.current().Line})
@@ -829,10 +829,10 @@ func (c *CStyleConverter) convertFunctionDefinition(state *ConversionState) ([]T
 				// For main(), parameters typically default to 0
 				tokens = append(tokens, Token{Type: TokenNumber, Value: "0", Line: state.current().Line})
 			}
-			
+
 			tokens = append(tokens, Token{Type: TokenRParen, Value: ")", Line: state.current().Line})
 		}
-		
+
 		tokens = append(tokens, Token{Type: TokenNewline, Value: "\n", Line: state.current().Line})
 	}
 
@@ -887,7 +887,7 @@ func (c *CStyleConverter) convertAsmBlock(state *ConversionState) ([]Token, erro
 				break
 			}
 		}
-		
+
 		if token.Type == TokenSemicolon {
 			// Convert semicolon to newline for assembly
 			tokens = append(tokens, Token{
@@ -913,7 +913,7 @@ func (c *CStyleConverter) convertAsmBlock(state *ConversionState) ([]Token, erro
 			// Pass through assembly tokens unchanged (but only if we're still inside the asm block)
 			tokens = append(tokens, token)
 		}
-		
+
 		state.advance()
 	}
 
@@ -939,9 +939,9 @@ func (c *CStyleConverter) convertStandaloneCall(state *ConversionState) ([]Token
 	if state.current().Type != TokenIdentifier {
 		return nil, fmt.Errorf("expected function name")
 	}
-	
+
 	functionName := state.current().Value
-	
+
 	// Check if next token is opening parenthesis
 	if state.peek(1).Type != TokenLParen {
 		return nil, fmt.Errorf("expected '(' after function name")
@@ -995,12 +995,12 @@ func (c *CStyleConverter) convertStandaloneCall(state *ConversionState) ([]Token
 	// Add parameters in traditional format if any exist
 	if len(macroCall.Arguments) > 0 {
 		tokens = append(tokens, Token{Type: TokenLParen, Value: "(", Line: startLine})
-		
+
 		for i, arg := range macroCall.Arguments {
 			if i > 0 {
 				tokens = append(tokens, Token{Type: TokenComma, Value: ",", Line: startLine})
 			}
-			
+
 			// Convert argument based on type
 			if arg.Type == ExpressionNumber {
 				tokens = append(tokens, Token{Type: TokenNumber, Value: fmt.Sprintf("%d", arg.Value), Line: startLine})
@@ -1008,7 +1008,7 @@ func (c *CStyleConverter) convertStandaloneCall(state *ConversionState) ([]Token
 				tokens = append(tokens, Token{Type: TokenIdentifier, Value: arg.Symbol, Line: startLine})
 			}
 		}
-		
+
 		tokens = append(tokens, Token{Type: TokenRParen, Value: ")", Line: startLine})
 	}
 
@@ -1065,7 +1065,7 @@ func (c *CStyleConverter) extractMacroCall(state *ConversionState) (*MacroCall, 
 		if state.current().Type == TokenSemicolon {
 			state.advance() // skip semicolon
 		}
-		
+
 		return &MacroCall{
 			Name:      macroName,
 			Arguments: arguments, // empty
@@ -1081,7 +1081,7 @@ func (c *CStyleConverter) extractMacroCall(state *ConversionState) (*MacroCall, 
 			if err != nil {
 				return nil, fmt.Errorf("invalid number in macro call: %v", err)
 			}
-			
+
 			arguments = append(arguments, &Expression{
 				Type:  ExpressionNumber,
 				Value: value,
@@ -1226,12 +1226,12 @@ func (c *CStyleConverter) skipAssignment(state *ConversionState) {
 	if state.current().Type == TokenEquals {
 		state.advance() // skip equals
 	}
-	
+
 	// Skip value (could be number, identifier, or function call)
 	for state.current().Type != TokenSemicolon && state.current().Type != TokenEOF && state.current().Type != TokenNewline {
 		state.advance()
 	}
-	
+
 	if state.current().Type == TokenSemicolon {
 		state.advance() // skip semicolon
 	}

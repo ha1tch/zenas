@@ -21,6 +21,7 @@ the Z80N opcode details see [Z80N_REFERENCE.md](Z80N_REFERENCE.md).
 - [Z80N (ZX Spectrum Next)](#z80n-zx-spectrum-next)
 - [Character sets](#character-sets)
 - [Output and reports](#output-and-reports)
+- [Packaging: zenas build](#packaging-zenas-build)
 - [Running and testing assembled code](#running-and-testing-assembled-code)
 
 For an orientation aimed at users coming from another assembler — what is
@@ -33,7 +34,7 @@ walkthrough using packages and the test harness, see the
 
 ```
 zenas assemble <input.asm> [output.bin] [options]   assemble to a raw binary
-zenas build    <input.asm> [options]                assemble and package to tape/snapshot
+zenas build    <input.asm> [options]                assemble and package to tape/snapshot/NEX
 zenas run      <input.asm> [options]                assemble and execute in the emulator
 zenas assert   <input.asm> --expect ... [options]   execute and check final state
 zenas test                                          run zenas's built-in self-tests
@@ -57,6 +58,10 @@ Options:
 | `--define=NAME[=VAL]` | Pre-define a symbol (default value 1); drives `IF`/`IFDEF` |
 | `--tag NAME` | Select a build tag (see [Build tags](#build-tags)) |
 | `--sym[=path]` | Write a pasmo-format symbol file (default `<output>.sym`) |
+| `--map[=path]` | Write a CSpect map file (default `<output>.map`); see [Symbol files](#symbol-files) |
+| `--map-paging=P,P,P,P,P,P,P,P` | The 8K page in each slot, for the map's physical addresses |
+| `--symbols=FILE` | Define the names in another tool's symbol file before assembling; may be repeated |
+| `--symbols-format=NAME` | Format of the `--symbols` files: `auto` (default), `cspect`, `pasmo`, `zenas`, `sjasmplus`, `z88dk` |
 | `--hex` / `--no-hex` | Force or suppress the hex dump of the output |
 | `--charset=NAME` | Character encoding for strings (see [Character sets](#character-sets)) |
 | `--no-warnings` | Suppress character-replacement warnings |
@@ -509,6 +514,89 @@ outputs; `--hex` forces it and `--no-hex` suppresses it.
 `--sym[=path]` writes a pasmo-format symbol file (`NAME EQU 0XXXXH`, one per
 line, sorted), suitable for memory-map tooling.
 
+### Symbol files
+
+`--map[=path]` writes the map file that CSpect's debugger loads with `-map`,
+in the form SNASM and sjasmplus (`CSPECTMAP`) write it. One symbol a line,
+sorted by name:
+
+```
+0000229B 0000029B 01 BORDER
+00008000 00008000 00 start
+0000C000 00000000 00 upper
+```
+
+The columns are the 16-bit value, the physical address, the type (`00` a
+label, `01` a constant: an `EQU`, a `--define` or a tag) and the name. A
+label's physical address is the 8K page in its slot times 8192, plus its
+offset in the page. The pages are the Next's as a program finds them, numbered
+as sjasmplus numbers them for its `ZXSPECTRUMNEXT` device: 14 and 15 under the
+ROM, then 10, 11 (bank 5), 4, 5 (bank 2) and 0, 1 (bank 0). For the same
+source the file is the one sjasmplus writes, except that sjasmplus puts the
+names in capitals and zenas leaves them as written.
+
+zenas has no paging directives, so code meant for another page is assembled
+at its address and the map is told where it will be:
+`--map-paging=14,15,10,11,4,5,60,61` gives the labels from 0xC000 up the
+physical addresses of pages 60 and 61.
+
+```
+zenas assemble game.asm game.bin --next --map
+CSpect.exe -map=game.map game.nex
+```
+
+`--symbols=FILE` goes the other way: the names in a symbol file another tool
+wrote are defined before the source is assembled, so it can call a ROM's
+routines or another module's labels by name without an include file of
+`EQU`s. Four formats are read, told apart by the file's first line
+(`--symbols-format` names one when that fails):
+
+| Format | Written by | A line |
+|--------|-----------|--------|
+| `cspect` | SNASM's `-map`, sjasmplus's `CSPECTMAP`, zenas's `--map`, zendis's `--map` | `00008000 00008000 00 START` |
+| `pasmo`, `zenas` | pasmo, and zenas's `--sym` | `start		EQU 08000H` |
+| `sjasmplus` | sjasmplus's `--sym` | `start: EQU 0x00008000` |
+| `z88dk` | z88dk's `.map` | `_main = $8000 ; addr, public, ...` |
+
+```
+zenas assemble kernel.asm kernel.bin --sym
+zenas assemble app.asm app.bin --symbols=kernel.sym --symbols=rom48.map
+```
+
+A character a zenas name cannot have becomes an underscore: CSpect's local
+label `START@LOOP` and sjasmplus's `start.loop` are `START_LOOP` and
+`start_loop` in the source. A value that does not fit in 16 bits is left out.
+Two files that give one name two values are an error. What is imported is not
+the program's own: it is left out of `--sym`, `--map` and the symbol table
+printed, unless the source defines the name itself, which then replaces the
+imported value. `zenas build` takes `--sym`, `--map`, `--map-paging` and
+`--symbols` too (see [Packaging](#packaging-zenas-build)).
+
+The formats were taken from files the tools wrote (the maps that come with
+CSpect, sjasmplus's output) and CSpect's ReadMe; z88dk's is from its
+documented shape. A map zenas wrote has not been loaded into CSpect.
+
+**As a library.** A program that embeds the assembler has the same three
+things without files, in the `assembler` package:
+
+```go
+asm := assembler.New()
+asm.ImportSymbols(romMap, symfile.FormatAuto)        // --symbols: any io.Reader
+result, _ := asm.AssembleString(source)
+
+assembler.WriteCSpectMap(w, result, assembler.DefaultNextPaging)   // --map
+assembler.WritePasmoSym(w, result)                                 // --sym
+symbols := assembler.ExportSymbols(result, paging)                 // the same, as data
+```
+
+`result.SymbolKinds` says which of `result.Symbols` are labels and which
+constants. `symfile` is zentools' `pkg/symfile`
+(`github.com/ha1tch/zentools/pkg/symfile`), which reads and writes the formats
+themselves and has `symfile.Table`, the names of several files by address.
+zendis uses the same package, so what `ExportSymbols` returns goes straight
+into the table a disassembly takes its names from; zendis's `docs/LIBRARY.md` has that
+example.
+
 `--json=LEVEL` emits a JSON report instead of a binary:
 
 | Level | Contents |
@@ -517,6 +605,87 @@ line, sorted), suitable for memory-map tooling.
 | `standard` | Adds errors and assembly info |
 | `detailed` | Adds an instruction breakdown |
 | `full` | Complete metadata with timing |
+
+## Packaging: zenas build
+
+`zenas build` assembles a source and writes it in the formats a Spectrum, a
+Spectrum Next or an emulator loads. Any number of formats can be asked for
+in one run; each is written beside the others as `<basename>.<ext>`.
+
+```
+zenas build <input.asm> [--tap] [--tzx] [--pzx] [--sna] [--z80] [--szx] [--nex]
+            [--loader] [--start <addr|symbol>] [--sp <addr>]
+            [--model 48k|128k|plus2|plus2a|plus3] [-o <basename>]
+            [--border <0-7>] [--core <a.b.c>]
+            [--next | --cpu=Z80|Z80N] [--define=NAME[=VAL]] [--tag NAME]
+            [--sym[=path]] [--map[=path]] [--map-paging=...] [--symbols=FILE]
+```
+
+| Option | File | What it is | `--start` |
+|--------|------|------------|-----------|
+| `--tap` | `.tap` | Tape: the code as one CODE block | with `--loader` |
+| `--tzx` | `.tzx` | The same tape as TZX | with `--loader` |
+| `--pzx` | `.pzx` | The same tape as PZX, with the ROM's standard timings | with `--loader` |
+| `--sna` | `.sna` | Snapshot, 48K or 128K by `--model` | required |
+| `--z80` | `.z80` | Snapshot, version 3 | required |
+| `--szx` | `.szx` | Snapshot in the ZX-State format | required |
+| `--nex` | `.nex` | Spectrum Next executable, for `.nexload` and the Browser | required |
+
+`--loader` puts a BASIC program ahead of the code on a tape, so that `LOAD ""`
+loads and runs it. `--start` is an address or a label of the source. `--sp`
+sets the stack pointer (0xFF00 if it is not given). `--model` picks the machine
+a snapshot is made for; it has no meaning for a tape or a `.nex`.
+
+**NEX.** The code goes into the banks that are paged in when a NEX program
+starts: bank 5 at 0x4000, bank 2 at 0x8000 and bank 0 at 0xC000. It must
+therefore begin at 0x4000 or above. `--border` is the border colour the
+loader sets (0 if not given) and `--core` the lowest core version the file
+asks for (2.0.28 if not given). The file has no loading screen and uses no
+bank beyond those three; `zx next nex` of zentools builds files that do.
+
+```
+zenas build game.asm --nex --start main --border 1
+```
+
+`--next` (or `--cpu=Z80N`), `--define` and `--tag` are those of `zenas
+assemble`: the Z80N instructions, symbols defined on the command line, and
+build tags, with `ZENAS_TAGS` defined as there. `--nex` turns the Z80N
+instructions on by itself, since a `.nex` runs on a Next only; when other
+formats are asked for in the same run they get the same code. `--cpu=Z80`
+keeps them off, for a source that uses a Z80N mnemonic as a name of its own.
+
+The formats are written by [zentools](https://github.com/ha1tch/zentools)'
+`pkg/build`, which zenas uses as a library; `zx` of zentools reads and
+converts every one of them.
+
+**As a library.** `pkg/artifact` is `zenas build` without files: it takes
+an assembly's result and returns a format's bytes.
+
+```go
+asm := assembler.New()
+asm.EnableZ80N()                                   // --next (--nex does it in the command)
+asm.DefineTags(tags)                               // --tag, any number; defines ZENAS_TAGS too
+name, value, _ := assembler.ParseDefine("LIVES=5") // --define
+asm.Define(name, value)
+result, _ := asm.AssembleString(source)
+
+nexOpts, _ := artifact.ParseNEXOptions("1", "3.1.10")   // --border, --core
+opts := artifact.Options{
+    Name:   "game",       // the name on a tape
+    Start:  "main",       // --start: an address or a label
+    Loader: true,         // --loader, for the tape formats
+    NEX:    nexOpts,
+}                         // SP and Model as --sp and --model; 0xFF00 and the 48K if not set
+for _, format := range artifact.Formats() {
+    img, err := artifact.Encode(result, format, opts)
+    // write img to "game" + format.Ext()
+}
+```
+
+`Format.NeedsStart(loader)` says whether a format needs `Start`, and
+`Format.Next()` which one is the Next's. `artifact.Request` returns
+zentools' `build.Request`, for a caller that goes on with `pkg/build`
+itself, and `artifact.ResolveStart` an entry point's address.
 
 ## Running and testing assembled code
 

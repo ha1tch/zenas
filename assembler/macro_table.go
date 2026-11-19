@@ -7,11 +7,11 @@ import (
 
 // MacroTable manages macro definitions and their validation
 type MacroTable struct {
-	macros      map[string]*MacroDefinition
-	convention  CallingConvention
-	style       MacroStyle
-	nextUnique  int             // For generating unique IDs
-	mnemonics   map[string]bool // instruction mnemonics (upper-case); a macro
+	macros     map[string]*MacroDefinition
+	convention CallingConvention
+	style      MacroStyle
+	nextUnique int             // For generating unique IDs
+	mnemonics  map[string]bool // instruction mnemonics (upper-case); a macro
 	// whose bare name is a mnemonic can never be reached unqualified, so it must
 	// be placed in a package. Populated by SetMnemonics; empty disables the check.
 }
@@ -74,7 +74,7 @@ func (mt *MacroTable) Define(macro *MacroDefinition) error {
 	if macro == nil {
 		return fmt.Errorf("cannot define nil macro")
 	}
-	
+
 	// Validate macro name
 	if macro.Name == "" {
 		return fmt.Errorf("macro name cannot be empty")
@@ -93,18 +93,18 @@ func (mt *MacroTable) Define(macro *MacroDefinition) error {
 	}
 
 	key := macroKey(macro.Package, macro.Name)
-	
+
 	// Check for duplicate definition (same package and name)
 	if existing, exists := mt.macros[key]; exists {
 		return fmt.Errorf("macro '%s' already defined at line %d", macro.Name, existing.LineNumber)
 	}
-	
+
 	// Validate parameter count against calling convention
 	if len(macro.Parameters) > len(mt.convention.ParamRegs) {
 		return fmt.Errorf("macro '%s' has %d parameters, but calling convention only supports %d",
 			macro.Name, len(macro.Parameters), len(mt.convention.ParamRegs))
 	}
-	
+
 	// Validate parameter names are unique
 	paramNames := make(map[string]bool)
 	for _, param := range macro.Parameters {
@@ -123,14 +123,14 @@ func (mt *MacroTable) Define(macro *MacroDefinition) error {
 		}
 		paramNames[upperName] = true
 	}
-	
+
 	// Assign unique ID for label generation
 	macro.UniqueID = mt.nextUnique
 	mt.nextUnique++
-	
+
 	// Store macro under its (package, name) key (case-insensitive)
 	mt.macros[key] = macro
-	
+
 	return nil
 }
 
@@ -265,21 +265,21 @@ func (mt *MacroTable) ValidateCall(call *MacroCall) (*MacroDefinition, error) {
 	if call == nil {
 		return nil, fmt.Errorf("cannot validate nil macro call")
 	}
-	
+
 	// Find macro definition
 	macro, exists := mt.Lookup(call.Name)
 	if !exists {
 		return nil, fmt.Errorf("undefined macro: %s", call.Name)
 	}
-	
+
 	// Check parameter count
 	if len(call.Arguments) != len(macro.Parameters) {
 		return nil, fmt.Errorf("macro '%s' expects %d parameters, got %d",
 			call.Name, len(macro.Parameters), len(call.Arguments))
 	}
-	
+
 	// Note: Type validation would happen during expansion when expressions are evaluated
-	
+
 	return macro, nil
 }
 
@@ -346,7 +346,7 @@ func (mt *MacroTable) ListMacros() []string {
 			}
 			paramList = strings.Join(params, ", ")
 		}
-		
+
 		macroDesc := fmt.Sprintf("%s(%s) -> %s [%s style]",
 			name, paramList, macro.ReturnType.String(), macro.Style.String())
 		macros = append(macros, macroDesc)

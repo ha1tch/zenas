@@ -125,10 +125,13 @@ echo "   base: PASS=$pass FAIL=$fail"
 # --- Z80N ----------------------------------------------------------------------
 
 echo "== Z80N (DEVICE ZXSPECTRUMNEXT) =="
-pass=0; fail=0
+pass=0; fail=0; skip=0
 while IFS='|' read -r ins _want; do
 	[ -z "$ins" ] && continue
-	sj="$(bytes_sjasm ZXSPECTRUMNEXT "$ins")" || { fail=$((fail+1)); echo "   sjasm rejected: $ins"; continue; }
+	# A form this sjasmplus does not take is not a difference: there is nothing
+	# to compare with (1.24.1 dropped LDIRSCALE). It is named and counted, and
+	# tools/check_z80n_coverage.sh still checks it against the reference bytes.
+	sj="$(bytes_sjasm ZXSPECTRUMNEXT "$ins")" || { skip=$((skip+1)); echo "   not in this sjasmplus, skipped: $ins"; continue; }
 	[ -z "$sj" ] && continue
 	zn="$(bytes_zenas '--next' "$ins")"
 	if [ "$zn" = "$sj" ]; then
@@ -137,7 +140,7 @@ while IFS='|' read -r ins _want; do
 		fail=$((fail+1)); printf "   DIFF %-16s zenas:%-12s sjasm:%-12s\n" "$ins" "${zn:-REJECT}" "$sj"
 	fi
 done < "$ROOT/tools/z80n_coverage.txt"
-echo "   z80n: PASS=$pass FAIL=$fail"
+echo "   z80n: PASS=$pass FAIL=$fail SKIPPED=$skip"
 [ "$fail" -eq 0 ] || rc=1
 
 echo

@@ -187,7 +187,6 @@ func TestExpectCollectedInTestFile(t *testing.T) {
 	}
 }
 
-
 // TestReservedMacroParamRejected verifies that a macro parameter whose name
 // collides with a register or condition code is rejected at definition time,
 // rather than silently assembling as that register inside the body.

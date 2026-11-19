@@ -3,10 +3,10 @@ package assembler
 
 import (
 	"fmt"
-	"strconv"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -109,6 +109,7 @@ type Assembler struct {
 	charset  string            // Character set for string encoding
 	warnings []AssemblyWarning // Character replacement warnings
 	baseDir  string            // Directory for resolving relative INCLUDE paths
+	imported map[string]uint16 // names ImportSymbols has defined, to tell two files that disagree
 
 	// Macro-specific components (ADDED)
 	macroTable    *MacroTable
@@ -120,13 +121,13 @@ type Assembler struct {
 	macroStyle        MacroStyle
 	macroMode         MacroMode // INLINE (default) or SINGLETON; set by .MACRO_MODE
 	callingConvention CallingConvention
-	currentPackage    string // affiliation set by .PACKAGE for subsequent macro defs
-	inPasmo           bool   // active pasmo dialect, tracked across the parse loop
-	origin            uint16 // address of the first ORG (load address for `run`)
-	originSet         bool   // whether a first ORG has been seen this assembly
-	inTestFile        bool   // top-level input is a *_test.asm file; gates .EXPECT
+	currentPackage    string     // affiliation set by .PACKAGE for subsequent macro defs
+	inPasmo           bool       // active pasmo dialect, tracked across the parse loop
+	origin            uint16     // address of the first ORG (load address for `run`)
+	originSet         bool       // whether a first ORG has been seen this assembly
+	inTestFile        bool       // top-level input is a *_test.asm file; gates .EXPECT
 	testSpecs         []TestSpec // .EXPECT directives collected this assembly
-	lastLabel         string // most recent label seen, for binding .EXPECT
+	lastLabel         string     // most recent label seen, for binding .EXPECT
 
 	// Expansion tracking (ADDED)
 	expansionLevel    int
@@ -175,6 +176,7 @@ type TestSpec struct {
 type AssemblyResult struct {
 	MachineCode []uint8
 	Symbols     map[string]uint16
+	SymbolKinds map[string]SymbolKind // what each of Symbols is: a label or a constant
 	Origin      uint16
 	Tests       []TestSpec
 	Listing     string
@@ -318,7 +320,16 @@ func (a *Assembler) SetBaseDir(dir string) {
 // values so conditional assembly (IF/IFDEF) can be driven from the build, the
 // way Go build tags select variants. Defines persist across both passes.
 func (a *Assembler) Define(name string, value uint16) {
-	a.symbols.Define(name, value)
+	a.symbols.DefineKind(name, value, SymbolConstant)
+}
+
+// Import pre-seeds a symbol that another tool's symbol file defines (the
+// command line's --symbols): a ROM's routines, another module's labels.
+// The source can use the name like any other. It is not in the result's
+// Symbols, and so in no symbol file written, unless the source defines the
+// name itself, which then counts.
+func (a *Assembler) Import(name string, value uint16) {
+	a.symbols.DefineKind(name, value, SymbolImported)
 }
 
 func (a *Assembler) AssembleString(source string) (*AssemblyResult, error) {
@@ -402,6 +413,7 @@ func (a *Assembler) assemble(source io.Reader) (*AssemblyResult, error) {
 	result.Origin = a.origin
 	result.Tests = a.testSpecs
 	result.Symbols = a.symbols.GetAll()
+	result.SymbolKinds = a.symbols.Kinds()
 	result.Warnings = a.warnings
 
 	return result, nil
@@ -449,7 +461,7 @@ func (a *Assembler) processPass(source string, result *AssemblyResult) error {
 // preprocessMacroDirectives extracts and processes macro style directives before conversion (NEW)
 func (a *Assembler) preprocessMacroDirectives(tokens []Token) error {
 	pos := 0
-	
+
 	for pos < len(tokens) {
 		// Skip whitespace and comments
 		pos = SkipWhitespaceAndComments(tokens, pos)
@@ -478,7 +490,7 @@ func (a *Assembler) preprocessMacroDirectives(tokens []Token) error {
 
 		pos++
 	}
-	
+
 	return nil
 }
 
@@ -774,15 +786,15 @@ func (a *Assembler) parseWithMacroSupport(tokens []Token) (*ParsedProgram, error
 		}
 
 		// CRITICAL FIX: Check for traditional MACRO definitions (from converter or original)
-		if pos < len(tokens) && tokens[pos].Type == TokenIdentifier && 
-		   strings.ToUpper(tokens[pos].Value) == "MACRO" {
+		if pos < len(tokens) && tokens[pos].Type == TokenIdentifier &&
+			strings.ToUpper(tokens[pos].Value) == "MACRO" {
 			// Directly use traditional macro parser for converted tokens
 			traditionalParser := NewTraditionalMacroParser()
 			traditionalParser.SetKnownMacros(a.macroNameSet())
-			
+
 			macro, newPos, err := traditionalParser.ParseMacroDefinition(tokens, pos)
 			if err != nil {
-				return nil, fmt.Errorf("error parsing converted macro definition at line %d: %v", 
+				return nil, fmt.Errorf("error parsing converted macro definition at line %d: %v",
 					tokens[pos].Line, err)
 			}
 
@@ -791,7 +803,7 @@ func (a *Assembler) parseWithMacroSupport(tokens []Token) (*ParsedProgram, error
 				macro.Package = a.currentPackage
 				err = a.macroTable.Define(macro)
 				if err != nil {
-					return nil, fmt.Errorf("error defining macro '%s' at line %d: %v", 
+					return nil, fmt.Errorf("error defining macro '%s' at line %d: %v",
 						macro.Name, tokens[pos].Line, err)
 				}
 			}
@@ -805,7 +817,7 @@ func (a *Assembler) parseWithMacroSupport(tokens []Token) (*ParsedProgram, error
 			a.macroParser.SetKnownMacros(a.macroNameSet())
 			macro, newPos, err := a.macroParser.ParseMacroDefinition(tokens, pos)
 			if err != nil {
-				return nil, fmt.Errorf("error parsing macro definition at line %d: %v", 
+				return nil, fmt.Errorf("error parsing macro definition at line %d: %v",
 					tokens[pos].Line, err)
 			}
 
@@ -814,7 +826,7 @@ func (a *Assembler) parseWithMacroSupport(tokens []Token) (*ParsedProgram, error
 				macro.Package = a.currentPackage
 				err = a.macroTable.Define(macro)
 				if err != nil {
-					return nil, fmt.Errorf("error defining macro '%s' at line %d: %v", 
+					return nil, fmt.Errorf("error defining macro '%s' at line %d: %v",
 						macro.Name, tokens[pos].Line, err)
 				}
 			}
@@ -832,10 +844,10 @@ func (a *Assembler) parseWithMacroSupport(tokens []Token) (*ParsedProgram, error
 					// This is a macro call disguised as a C-style function call
 					call, newPos, err := a.macroParser.ParseMacroCall(tokens, pos)
 					if err != nil {
-						return nil, fmt.Errorf("error parsing macro call at line %d: %v", 
+						return nil, fmt.Errorf("error parsing macro call at line %d: %v",
 							tokens[pos].Line, err)
 					}
-					
+
 					// Expand the macro call immediately
 					if err := a.emitMacroInstantiation(call, program, tokens[pos].Line); err != nil {
 						return nil, err
@@ -895,22 +907,22 @@ func (a *Assembler) couldBeCStyleMacroCall(tokens []Token, pos int) bool {
 	if pos >= len(tokens) || tokens[pos].Type != TokenIdentifier {
 		return false
 	}
-	
+
 	// Check for parentheses (function call syntax)
 	if pos+1 < len(tokens) && tokens[pos+1].Type == TokenLParen {
 		return true
 	}
-	
+
 	// Check for assignment syntax: identifier = macro_call(...)
-	if pos+2 < len(tokens) && 
-	   tokens[pos+1].Type == TokenIdentifier && tokens[pos+1].Value == "=" &&
-	   tokens[pos+2].Type == TokenIdentifier {
+	if pos+2 < len(tokens) &&
+		tokens[pos+1].Type == TokenIdentifier && tokens[pos+1].Value == "=" &&
+		tokens[pos+2].Type == TokenIdentifier {
 		// Look ahead for parentheses after the macro name
 		if pos+3 < len(tokens) && tokens[pos+3].Type == TokenLParen {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -1148,7 +1160,7 @@ func (a *Assembler) processLineOriginal(line *ParsedLine, result *AssemblyResult
 				if err != nil {
 					return err
 				}
-				a.symbols.Define(line.Label, uint16(value))
+				a.symbols.DefineKind(line.Label, uint16(value), SymbolConstant)
 			} else {
 				// Regular label - use current address
 				a.symbols.Define(line.Label, a.address)
@@ -1223,6 +1235,7 @@ func (a *Assembler) shouldInterceptAsMacro(name string) bool {
 //     AND is not a real instruction mnemonic (instructions are never shadowed);
 //   - a bare name defined in more than one package is ambiguous and reported as
 //     an error telling the user to qualify it.
+//
 // It returns (call, nil) for a macro call, (nil, nil) for a non-macro line, and
 // (nil, err) for an ambiguous bare name.
 func (a *Assembler) detectMacroCall(instruction *Instruction) (*MacroCall, error) {
@@ -1439,7 +1452,7 @@ func (a *Assembler) processCallingConventionDirective(tokens []Token, pos int) (
 func (a *Assembler) parseRegularLine(tokens []Token, pos int) (*ParsedLine, int, error) {
 	// Collect tokens until newline or EOF
 	lineTokens := []Token{}
-	
+
 	for pos < len(tokens) && tokens[pos].Type != TokenNewline {
 		lineTokens = append(lineTokens, tokens[pos])
 		pos++
@@ -1676,7 +1689,7 @@ func (a *Assembler) processDirective(directive *Directive, result *AssemblyResul
 		if len(directive.Arguments) == 0 {
 			return fmt.Errorf("DS directive requires at least one argument (byte count)")
 		}
-		
+
 		// Get byte count
 		count, err := a.evaluateExpression(directive.Arguments[0])
 		if err != nil {
@@ -1685,7 +1698,7 @@ func (a *Assembler) processDirective(directive *Directive, result *AssemblyResul
 		if count < 0 {
 			return fmt.Errorf("DS byte count cannot be negative: %d", count)
 		}
-		
+
 		// Get fill value (default to 0)
 		fillValue := 0
 		if len(directive.Arguments) > 1 {
@@ -1697,7 +1710,7 @@ func (a *Assembler) processDirective(directive *Directive, result *AssemblyResul
 				return fmt.Errorf("DS fill value out of range: %d", fillValue)
 			}
 		}
-		
+
 		// Reserve the bytes
 		if a.pass == 2 {
 			for i := 0; i < count; i++ {
@@ -1775,7 +1788,7 @@ func (a *Assembler) processDirective(directive *Directive, result *AssemblyResul
 func (a *Assembler) processInstruction(instruction *Instruction, result *AssemblyResult) error {
 	// Resolve operands to concrete values
 	var resolvedOperands []*ResolvedOperand
-	
+
 	for _, operand := range instruction.Operands {
 		resolvedOperand, err := a.resolveOperand(operand)
 		if err != nil {
@@ -1800,21 +1813,21 @@ func (a *Assembler) processInstruction(instruction *Instruction, result *Assembl
 			target.Value = disp
 		}
 	}
-	
+
 	// Use the encoder to generate machine code
 	machineCode, err := a.encoder.Encode(instruction.Mnemonic, resolvedOperands)
 	if err != nil {
 		return fmt.Errorf("error encoding instruction %s: %v", instruction.Mnemonic, err)
 	}
-	
+
 	// Only add to output on pass 2
 	if a.pass == 2 {
 		a.output = append(a.output, machineCode...)
 	}
-	
+
 	// Update address
 	a.address += uint16(len(machineCode))
-	
+
 	return nil
 }
 
@@ -1842,7 +1855,7 @@ func (a *Assembler) resolveOperand(operand *Operand) (*ResolvedOperand, error) {
 		}
 		resolved.Displacement = d
 	}
-	
+
 	// Resolve expression if present
 	if operand.Expression != nil {
 		value, err := a.evaluateExpression(operand.Expression)
@@ -1850,7 +1863,7 @@ func (a *Assembler) resolveOperand(operand *Operand) (*ResolvedOperand, error) {
 			return nil, err
 		}
 		resolved.Value = value
-		
+
 		// Determine operand type based on value range if not explicitly set
 		if operand.Type == OperandImmediate16 {
 			if value >= -128 && value <= 255 {
@@ -1859,7 +1872,7 @@ func (a *Assembler) resolveOperand(operand *Operand) (*ResolvedOperand, error) {
 			}
 		}
 	}
-	
+
 	return resolved, nil
 }
 

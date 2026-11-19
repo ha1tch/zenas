@@ -36,14 +36,14 @@ fmt:
 ## smoke: assemble the bundled examples as a quick sanity check
 smoke: build
 	@echo "-- smoke: assembling examples"
-	@for f in examples/*.asm; do \
+	@failed=0; for f in examples/*.asm; do \
 		printf '   %s ... ' "$$f"; \
 		if $(BIN_DIR)/$(BINARY) assemble "$$f" /dev/null >/dev/null 2>&1; then \
 			echo "ok"; \
 		else \
-			echo "FAIL (expected for in-progress syntax)"; \
+			echo "FAIL"; failed=1; \
 		fi; \
-	done
+	done; [ "$$failed" -eq 0 ]
 
 ## test-sjasmplus: optional cross-check against sjasmplus (builds it from source).
 ## Verifies base Z80 and Z80N encodings byte-for-byte against the de facto ZX

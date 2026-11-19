@@ -111,6 +111,7 @@ if $CUT_ZIP; then
     # ship source + project files; exclude build artefacts, VCS, attic, and OS cruft
     zip -rq "$ZIP" . \
         -x '.git/*' -x 'build/*' -x 'attic/*' -x 'repoman/*' \
+        -x '.ed-journal.json' -x 'release-*.log' \
         -x '*.DS_Store' -x 'zenas-v*.zip' -x "$ZIP"
     ok "wrote $ZIP ($(wc -c < "$ZIP") bytes)"
 else

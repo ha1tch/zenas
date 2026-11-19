@@ -7,8 +7,9 @@ import (
 
 // TraditionalMacroParser handles traditional assembly macro syntax
 // Format: MACRO name(param1, param2, ...)
-//           body...
-//         ENDMACRO
+//
+//	  body...
+//	ENDMACRO
 type TraditionalMacroParser struct {
 	baseParser *Parser
 	// knownMacros lets the body parser recognise nested macro calls. Set before
@@ -42,14 +43,14 @@ func (tmp *TraditionalMacroParser) CanParseMacroCall(tokens []Token, startPos in
 	if startPos >= len(tokens) || tokens[startPos].Type != TokenIdentifier {
 		return false
 	}
-	
+
 	// Skip the identifier
 	pos := startPos + 1
 	if pos < len(tokens) && tokens[pos].Type == TokenLParen {
 		// Has parentheses, likely a macro call
 		return true
 	}
-	
+
 	// Could be a macro call without parentheses (depends on macro table)
 	return true
 }
@@ -57,40 +58,40 @@ func (tmp *TraditionalMacroParser) CanParseMacroCall(tokens []Token, startPos in
 // ParseMacroDefinition parses a traditional macro definition
 func (tmp *TraditionalMacroParser) ParseMacroDefinition(tokens []Token, startPos int) (*MacroDefinition, int, error) {
 	pos := startPos
-	
+
 	// Expect MACRO keyword
 	if !TokenValueMatches(tokens, pos, TokenIdentifier, "MACRO") {
 		return nil, pos, fmt.Errorf("expected MACRO keyword")
 	}
 	pos++
-	
+
 	// Expect macro name
 	if pos >= len(tokens) || tokens[pos].Type != TokenIdentifier {
 		return nil, pos, fmt.Errorf("expected macro name after MACRO")
 	}
-	
+
 	macroName := tokens[pos].Value
 	pos++
-	
+
 	// Parse parameters if present
 	var parameters []*MacroParameter
-	
+
 	if pos < len(tokens) && tokens[pos].Type == TokenLParen {
 		pos++ // Skip opening parenthesis
-		
+
 		// Parse parameter list
 		for pos < len(tokens) && tokens[pos].Type != TokenRParen {
 			// Skip whitespace and comments
 			pos = SkipWhitespaceAndComments(tokens, pos)
-			
+
 			if pos >= len(tokens) {
 				return nil, pos, fmt.Errorf("unterminated parameter list")
 			}
-			
+
 			if tokens[pos].Type == TokenRParen {
 				break
 			}
-			
+
 			// Optional width marker before the name: MACRO f(uint8_t a, word b).
 			// Absent means untyped (not width-checked). The marker is one of the
 			// type keywords recognised by ParseParameterType.
@@ -108,20 +109,20 @@ func (tmp *TraditionalMacroParser) ParseMacroDefinition(tokens []Token, startPos
 			if tokens[pos].Type != TokenIdentifier {
 				return nil, pos, fmt.Errorf("expected parameter name")
 			}
-			
+
 			paramName := tokens[pos].Value
 			pos++
-			
+
 			param := &MacroParameter{
 				Name: paramName,
 				Type: paramType,
 			}
-			
+
 			parameters = append(parameters, param)
-			
+
 			// Skip whitespace
 			pos = SkipWhitespaceAndComments(tokens, pos)
-			
+
 			// Check for comma or closing parenthesis
 			if pos < len(tokens) && tokens[pos].Type == TokenComma {
 				pos++ // Skip comma
@@ -131,40 +132,40 @@ func (tmp *TraditionalMacroParser) ParseMacroDefinition(tokens []Token, startPos
 				return nil, pos, fmt.Errorf("unterminated parameter list")
 			}
 		}
-		
+
 		if pos >= len(tokens) || tokens[pos].Type != TokenRParen {
 			return nil, pos, fmt.Errorf("expected closing parenthesis")
 		}
 		pos++ // Skip closing parenthesis
 	}
-	
+
 	// Skip to end of line
 	pos = FindEndOfStatement(tokens, pos)
 	if pos < len(tokens) && tokens[pos].Type == TokenNewline {
 		pos++
 	}
-	
+
 	// Parse macro body until ENDMACRO
 	var bodyTokens []Token
 	bodyStart := pos
-	
+
 	for pos < len(tokens) {
 		if TokenValueMatches(tokens, pos, TokenIdentifier, "ENDMACRO") {
 			break
 		}
 		pos++
 	}
-	
+
 	if pos >= len(tokens) {
 		return nil, pos, fmt.Errorf("missing ENDMACRO for macro %s", macroName)
 	}
-	
+
 	// Extract body tokens
 	bodyTokens = tokens[bodyStart:pos]
-	
+
 	// Skip ENDMACRO
 	pos++
-	
+
 	// Parse the body tokens into ParsedLines
 	bodyParser := NewParser()
 	if tmp.knownMacros != nil {
@@ -174,7 +175,7 @@ func (tmp *TraditionalMacroParser) ParseMacroDefinition(tokens []Token, startPos
 	if err != nil {
 		return nil, pos, fmt.Errorf("error parsing macro body: %v", err)
 	}
-	
+
 	macro := &MacroDefinition{
 		Name:       macroName,
 		Parameters: parameters,
@@ -183,7 +184,7 @@ func (tmp *TraditionalMacroParser) ParseMacroDefinition(tokens []Token, startPos
 		Style:      MacroStyleTraditional,
 		LineNumber: tokens[startPos].Line,
 	}
-	
+
 	return macro, pos, nil
 }
 
@@ -216,46 +217,46 @@ func returnWidthBits(returnType string) (bits int, returnsValue bool) {
 // ParseMacroCall parses a traditional macro call
 func (tmp *TraditionalMacroParser) ParseMacroCall(tokens []Token, startPos int) (*MacroCall, int, error) {
 	pos := startPos
-	
+
 	// Expect macro name
 	if pos >= len(tokens) || tokens[pos].Type != TokenIdentifier {
 		return nil, pos, fmt.Errorf("expected macro name")
 	}
-	
+
 	macroName := tokens[pos].Value
 	pos++
-	
+
 	var arguments []*Expression
-	
+
 	// Check for parameters
 	if pos < len(tokens) && tokens[pos].Type == TokenLParen {
 		pos++ // Skip opening parenthesis
-		
+
 		// Parse argument list
 		for pos < len(tokens) && tokens[pos].Type != TokenRParen {
 			// Skip whitespace and comments
 			pos = SkipWhitespaceAndComments(tokens, pos)
-			
+
 			if pos >= len(tokens) {
 				return nil, pos, fmt.Errorf("unterminated argument list")
 			}
-			
+
 			if tokens[pos].Type == TokenRParen {
 				break
 			}
-			
+
 			// Parse expression argument
 			expr, newPos, err := tmp.parseExpressionFromTokens(tokens, pos)
 			if err != nil {
 				return nil, pos, fmt.Errorf("error parsing argument: %v", err)
 			}
-			
+
 			arguments = append(arguments, expr)
 			pos = newPos
-			
+
 			// Skip whitespace
 			pos = SkipWhitespaceAndComments(tokens, pos)
-			
+
 			// Check for comma or closing parenthesis
 			if pos < len(tokens) && tokens[pos].Type == TokenComma {
 				pos++ // Skip comma
@@ -265,33 +266,33 @@ func (tmp *TraditionalMacroParser) ParseMacroCall(tokens []Token, startPos int) 
 				return nil, pos, fmt.Errorf("unterminated argument list")
 			}
 		}
-		
+
 		if pos >= len(tokens) || tokens[pos].Type != TokenRParen {
 			return nil, pos, fmt.Errorf("expected closing parenthesis")
 		}
 		pos++ // Skip closing parenthesis
 	}
-	
+
 	call := &MacroCall{
 		Name:       macroName,
 		Arguments:  arguments,
 		Style:      MacroStyleTraditional,
 		LineNumber: tokens[startPos].Line,
 	}
-	
+
 	return call, pos, nil
 }
 
 // parseExpressionFromTokens parses a simple expression from tokens
 func (tmp *TraditionalMacroParser) parseExpressionFromTokens(tokens []Token, startPos int) (*Expression, int, error) {
 	pos := startPos
-	
+
 	if pos >= len(tokens) {
 		return nil, pos, fmt.Errorf("unexpected end of input")
 	}
-	
+
 	token := tokens[pos]
-	
+
 	switch token.Type {
 	case TokenNumber:
 		value, err := ParseNumber(token)
@@ -303,39 +304,39 @@ func (tmp *TraditionalMacroParser) parseExpressionFromTokens(tokens []Token, sta
 			Type:  ExpressionNumber,
 			Value: value,
 		}, pos, nil
-		
+
 	case TokenIdentifier:
 		pos++
 		return &Expression{
 			Type:   ExpressionSymbol,
 			Symbol: token.Value,
 		}, pos, nil
-		
+
 	case TokenString:
 		pos++
 		return &Expression{
 			Type:        ExpressionString,
 			StringValue: token.Value,
 		}, pos, nil
-		
+
 	case TokenMinus:
 		// Handle negative numbers
 		pos++
 		if pos >= len(tokens) || tokens[pos].Type != TokenNumber {
 			return nil, pos, fmt.Errorf("expected number after minus sign")
 		}
-		
+
 		value, err := ParseNumber(tokens[pos])
 		if err != nil {
 			return nil, pos, fmt.Errorf("invalid number: %v", err)
 		}
 		pos++
-		
+
 		return &Expression{
 			Type:  ExpressionNumber,
 			Value: -value,
 		}, pos, nil
-		
+
 	default:
 		return nil, pos, fmt.Errorf("unexpected token in expression: %s", token.Type)
 	}
@@ -346,15 +347,15 @@ func IsTraditionalMacroKeyword(token Token) bool {
 	if token.Type != TokenIdentifier {
 		return false
 	}
-	
+
 	keywords := []string{"MACRO", "ENDMACRO"}
 	value := strings.ToUpper(token.Value)
-	
+
 	for _, keyword := range keywords {
 		if value == keyword {
 			return true
 		}
 	}
-	
+
 	return false
 }

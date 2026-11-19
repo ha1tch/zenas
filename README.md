@@ -30,93 +30,33 @@ design is in **[the design rationale](docs/ZENAS_DESIGN.md)**.
 | Command          | Does                                                        |
 | ---------------- | ----------------------------------------------------------- |
 | `zenas assemble` | assemble source to a raw binary (or a JSON report)          |
-| `zenas build`    | assemble and package into a tape or snapshot                |
+| `zenas build`    | assemble and package into a tape, snapshot or `.nex`        |
 | `zenas run`      | assemble and execute in the built-in Z80 emulator           |
 | `zenas assert`   | execute and check the final machine state (CI-friendly)     |
 | `zenas version`  | print the version                                           |
 | `zenas help`     | list options; `help --all` for the full reference           |
 
-### Usage: assemble
+```sh
+# assemble: Z80N on, a symbol defined, a build tag, a map for CSpect's debugger
+zenas assemble game.asm game.bin --next --define=LIVES=5 --tag debug --map
 
-```
-zenas assemble <input.asm> [output.bin] [--hex] [--json=LEVEL] [--charset=NAME]
-              [--sym[=path]] [--define=NAME[=VAL]] [--tag NAME]
-              [--next | --cpu=Z80|Z80N]
-```
-
-```
-# assemble to a raw binary
-zenas assemble game.asm game.bin
-
-# enable the ZX Spectrum Next instruction set
-zenas assemble game.asm --next
-
-# conditional build with a defined symbol and two build tags
-zenas assemble game.asm out.bin --define DEBUG --tag debug --tag plus3
-
-# write a pasmo-format symbol file alongside the output
-zenas assemble game.asm game.bin --sym
-
-# emit a JSON report instead of a binary
-zenas assemble game.asm --json=detailed
-```
-
-`--next` (or `--cpu=Z80N`) turns on the Z80N extensions; the default is `Z80`.
-`--define` pre-sets a symbol for `IF`/`IFDEF`. `--tag` selects a build tag, the
-way Go build tags select variants: each tag defines `ZENAS_TAG_NAME`,
-`ZENAS_TAGBIT_NAME`, and contributes to the composite `ZENAS_TAGS` bitmask, so
-tags compose in `IF` conditions with `AND`/`OR`/`NOT`. `--charset` picks the
-string encoding (Spectrum, MSX, CPC and regional variants; see `help --all`).
-
-### Usage: build
-
-```
-zenas build <input.asm> [--tap] [--tzx] [--sna] [--z80] [--loader]
-            [--start <addr|symbol>] [--sp <addr>]
-            [--model 48k|128k|plus2|plus2a|plus3] [-o <basename>]
-```
-
-```
-# snapshot for development testing — loads and runs in one step
+# build: a snapshot to try, tapes to ship, a Spectrum Next executable
 zenas build game.asm --z80 --start main --model 128k
-
-# tapes for distribution, with a BASIC auto-run loader
 zenas build game.asm --tap --tzx --loader --start main
-```
+zenas build game.asm --nex --start main
 
-`build` assembles the source and packages it into loadable artifacts. Snapshots
-(`--sna`, `--z80`) carry a full machine state, so the code runs immediately at
-`--start`; tapes (`--tap`, `--tzx`) encode the code as a CODE block, and
-`--loader` prepends a BASIC loader so `LOAD ""` runs it. `--start` (an address
-or a source label) is required for snapshots and for `--loader`; `--sp` overrides
-the stack pointer; `--model` picks the machine a snapshot is overlaid on; `-o`
-sets the output basename. Recommended workflow: snapshots while iterating, tapes
-to ship. Examples are in [`examples/`](examples/).
-
-### Usage: run and test
-
-zenas can execute the code it assembles, in a built-in Z80 emulator, and assert
-on the result — no separate emulator, no file round-trip.
-
-```
-# run a routine and watch it execute
+# run and test: watch a routine, assert its contract, run a test file
 zenas run game.asm --call=main --trace
-
-# assert a routine's contract (exits non-zero on failure, so it fits CI)
 zenas assert math.asm --call=multiply --expect="A=0x0C,CF=0"
-
-# run a whole test suite: a *_test.asm file with test_* routines and .EXPECT
 zenas assert math_test.asm
 ```
 
-`run` executes the assembled code and reports the final CPU and memory state;
-`--trace` shows each instruction, `--dump=START:LEN` dumps memory, and
-`--preload=ADDR,FILE` loads input data first. `assert` adds `--expect` checks
-over registers, flags, and memory bytes. A `*_test.asm` file with `test_*`
-routines each followed by an `.EXPECT` directive runs go-test style — and
-`.EXPECT`/`.MATCH` are legal *only* in `*_test.asm` files, so test metadata can
-never leak into a shipped binary. See [`docs/RUNTIME.md`](docs/RUNTIME.md) for
-the complete run/assert reference.
+`build` writes `.tap`, `.tzx`, `.pzx`, `.sna`, `.z80`, `.szx` and `.nex`;
+snapshots while iterating and tapes to ship is the workflow it is meant for.
+`.EXPECT` and `.MATCH` are legal only in `*_test.asm` files, so test metadata
+cannot reach a shipped binary. The [manual](docs/MANUAL.md) has every option
+of `assemble` and `build`, and the [runtime reference](docs/RUNTIME.md) those
+of `run` and `assert`.
 
 ## Install
 
@@ -148,7 +88,7 @@ reference assembler:
 - the **468** documented Z80 instructions (match pasmo and sjasmplus);
 - the **48** undocumented IX/IY half-register forms (match pasmo and sjasmplus),
   with the illegal combinations rejected;
-- the **29** Z80N (ZX Spectrum Next) extensions (match sjasmplus), off by
+- the **30** Z80N (ZX Spectrum Next) extensions (match sjasmplus), off by
   default, enabled with `--next`.
 
 See [`docs/INSTRUCTION_SET.md`](docs/INSTRUCTION_SET.md) for the coverage
@@ -162,27 +102,10 @@ the measured state of that compatibility, gap by gap, is documented in
 
 ## Library
 
-`pkg/z80enc` is zenas's own opcode-encoding knowledge, exported directly:
-pure, dependency-free functions taking plain Go primitives (register
-names as strings, displacements as `int8`, bit numbers as `uint8`)
-rather than any parser-specific operand type. `encoder.go`'s own
-`encode*` functions are thin adapters over this package, not duplicate
-logic, so a fork with its own front end can import the real opcode
-arithmetic directly instead of re-deriving it from release notes each
-time a fix lands:
-
-```go
-import "github.com/ha1tch/zenas/pkg/z80enc"
-
-b, err := z80enc.EncodeDDFDCBCopy(0x00, "IX", 1, "B") // RLC (IX+1),B
-// b == []byte{0xDD, 0xCB, 0x01, 0x00}
-```
-
-Covers every instruction group in this codebase's own encoder: 8-bit
-and 16-bit register operations, indirect-memory addressing, jump/call/
-branch, the DDCB/FDCB group (including its undocumented copy-to-
-register forms), the Z80N extensions, and more. See the package's own
-doc comments for the full surface.
+What the command does is in packages, for a program that embeds the
+assembler: `assembler` (assembling, build tags, symbol files),
+`pkg/artifact` (`zenas build` in memory) and `pkg/z80enc` (the opcode
+encoding as pure functions). [`docs/LIBRARY.md`](docs/LIBRARY.md) has them.
 
 ## Documentation
 
@@ -197,6 +120,8 @@ doc comments for the full surface.
 - **[Packaged-program tutorial](docs/PACKAGED_PROGRAM_TUTORIAL.md)** — a worked
   walkthrough building and testing a program with packages, `.EXPECT`, `.MATCH`.
 - **[Manual](docs/MANUAL.md)** — full command line, language, and directives.
+- **[Library](docs/LIBRARY.md)** — the packages, for a program that embeds
+  the assembler.
 - **[Runtime reference](docs/RUNTIME.md)** — running and testing code with
   `run` and `assert`.
 - **[Instruction set](docs/INSTRUCTION_SET.md)** — coverage by family, with

@@ -15,7 +15,7 @@ type MacroNotationParser interface {
 
 // MacroParserManager manages different macro notation parsers
 type MacroParserManager struct {
-	parsers    map[MacroStyle]MacroNotationParser
+	parsers      map[MacroStyle]MacroNotationParser
 	currentStyle MacroStyle
 }
 
@@ -33,11 +33,11 @@ func NewMacroParserManager() *MacroParserManager {
 		parsers:      make(map[MacroStyle]MacroNotationParser),
 		currentStyle: MacroStyleTraditional,
 	}
-	
+
 	// Register built-in parsers
 	manager.parsers[MacroStyleTraditional] = NewTraditionalMacroParser()
 	manager.parsers[MacroStyleC] = NewCStyleMacroParser()
-	
+
 	return manager
 }
 
@@ -61,19 +61,19 @@ func (mpm *MacroParserManager) ParseMacroDefinition(tokens []Token, startPos int
 	if !exists {
 		return nil, startPos, fmt.Errorf("no parser available for style: %v", mpm.currentStyle)
 	}
-	
+
 	if !parser.CanParseMacroDefinition(tokens, startPos) {
 		return nil, startPos, fmt.Errorf("tokens do not represent a macro definition for style: %v", mpm.currentStyle)
 	}
-	
+
 	macro, newPos, err := parser.ParseMacroDefinition(tokens, startPos)
 	if err != nil {
 		return nil, startPos, err
 	}
-	
+
 	// Set the style in the macro definition
 	macro.Style = mpm.currentStyle
-	
+
 	return macro, newPos, nil
 }
 
@@ -83,19 +83,19 @@ func (mpm *MacroParserManager) ParseMacroCall(tokens []Token, startPos int) (*Ma
 	if !exists {
 		return nil, startPos, fmt.Errorf("no parser available for style: %v", mpm.currentStyle)
 	}
-	
+
 	if !parser.CanParseMacroCall(tokens, startPos) {
 		return nil, startPos, fmt.Errorf("tokens do not represent a macro call for style: %v", mpm.currentStyle)
 	}
-	
+
 	call, newPos, err := parser.ParseMacroCall(tokens, startPos)
 	if err != nil {
 		return nil, startPos, err
 	}
-	
+
 	// Set the style in the macro call
 	call.Style = mpm.currentStyle
-	
+
 	return call, newPos, nil
 }
 
@@ -138,17 +138,17 @@ func TokenSequenceMatches(tokens []Token, startPos int, expected ...TokenType) b
 	if startPos < 0 || startPos >= len(tokens) {
 		return false
 	}
-	
-	if startPos + len(expected) > len(tokens) {
+
+	if startPos+len(expected) > len(tokens) {
 		return false
 	}
-	
+
 	for i, expectedType := range expected {
-		if tokens[startPos + i].Type != expectedType {
+		if tokens[startPos+i].Type != expectedType {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -157,7 +157,7 @@ func TokenValueMatches(tokens []Token, pos int, expectedType TokenType, expected
 	if pos < 0 || pos >= len(tokens) {
 		return false
 	}
-	
+
 	token := tokens[pos]
 	return token.Type == expectedType && strings.ToUpper(token.Value) == strings.ToUpper(expectedValue)
 }
@@ -167,7 +167,7 @@ func FindMatchingToken(tokens []Token, startPos int, openType, closeType TokenTy
 	if startPos < 0 || startPos >= len(tokens) || tokens[startPos].Type != openType {
 		return -1
 	}
-	
+
 	depth := 1
 	for i := startPos + 1; i < len(tokens); i++ {
 		if tokens[i].Type == openType {
@@ -179,7 +179,7 @@ func FindMatchingToken(tokens []Token, startPos int, openType, closeType TokenTy
 			}
 		}
 	}
-	
+
 	return -1 // No matching closing token found
 }
 

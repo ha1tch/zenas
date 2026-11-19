@@ -12,7 +12,8 @@ about the code, not the language it implements.
   `assemble`/`version`/`help` subcommands.
 - **`build_cmd.go`** -- the `zenas build` subcommand. Where `assemble`
   produces a raw binary (or JSON), `build` wraps that output as a
-  loadable ZX Spectrum artefact (tape, snapshot) via `pkg/build`.
+  loadable ZX Spectrum artefact (tape, snapshot, NEX) via zentools'
+  `pkg/build`.
 - **`run.go`** -- the `zenas run`/`zenas assert` subcommands: executes
   assembled code against zen80 (via a Go module dependency, not
   vendored) and checks `.EXPECT`/`.MATCH` assertions from `*_test.asm`
@@ -97,17 +98,31 @@ One file per instruction-shape family, each independently tested:
 | `misc.go` | `EX`, `EX (SP),HL`, `IM`, `IN`/`OUT` (register- and immediate-port forms, including the undocumented bare `IN (C)`/`OUT (C),0`), half-index-register prefix handling, and the trivial fixed-opcode/`LD SP,HL` shapes |
 | `z80n.go` | The whole Z80N (ZX Spectrum Next) extension set |
 
-## `pkg/build`: ZX Spectrum output formats
+## ZX Spectrum output formats: zentools' `pkg/build`
 
-Turns assembled machine code into loadable Spectrum artefacts --
-`build.go` (tape/snapshot orchestration), `embed.go` (one real
-booted-machine snapshot per model, embedded and decoded on demand as
-the base a program's own bytes get written into), `loader.go`
-(generates a BASIC loader for a CODE-only tape, since a real Spectrum
-needs a BASIC program to `LOAD` and jump to raw code), `names.go`
-(the three separate filename namespaces a build touches -- host
-filesystem, tape block name, BASIC program name -- each with its own
-normalisation rules).
+Turning assembled machine code into loadable artefacts is not done in
+this module: `build_cmd.go` calls `github.com/ha1tch/zentools/pkg/build`
+(`EncodeTAP`, `EncodeTAPWithLoader`, `EncodeTZXFromTAP`, `EncodePZX`,
+`EncodeSNA`, `EncodeZ80`, `EncodeSZX`, `EncodeNEX`). This module had a
+copy of an older state of that package, which nothing imported; it was
+removed in 0.15.0. The formats are the ones `zx` reads back.
+
+## `pkg/artifact`
+
+What `zenas build` does between an `AssemblyResult` and those calls, as
+a library since 0.16.0: the formats and which of them need an entry
+point (`Format`), the entry point as an address or a label
+(`ResolveStart`), the stack pointer and model defaults, the loader for
+the tape formats, and `Encode`, which returns one format's bytes.
+`build_cmd.go` parses the command line and writes the files, and has
+no rule of its own left. A format zentools gains is a constant and a
+line of `Encode` here.
+
+## Build tags: `assembler/tags.go`
+
+`DefineTags`, `TagDefines`, `TagSymbol` and `ParseDefine`: what `--tag`
+and `--define` mean, in the assembler package since 0.16.0, where
+`main.go` and `build_cmd.go` each used to reach it from the command.
 
 ## `pkg/version`
 
